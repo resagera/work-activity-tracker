@@ -95,7 +95,6 @@ type Tracker struct {
 	pausedManually bool
 	locked         bool
 	warned         bool
-	lastInputAt    time.Time
 	lastStateAt    time.Time
 	ended          bool
 
@@ -107,7 +106,6 @@ func NewTracker(cfg Config) *Tracker {
 	return &Tracker{
 		cfg:              cfg,
 		sessionStartedAt: now,
-		lastInputAt:      now,
 		lastStateAt:      now,
 	}
 }
@@ -118,22 +116,30 @@ func (t *Tracker) SetTelegram(n *TelegramNotifier) {
 	t.tele = n
 }
 
+func (t *Tracker) getTelegram() (*TelegramNotifier, int64) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.tele, t.cfg.TelegramChatID
+}
+
 func (t *Tracker) logf(format string, args ...any) {
 	msg := fmt.Sprintf(format, args...)
 	log.Println(msg)
-	t.mu.Lock()
-	tele := t.tele
-	chatID := t.cfg.TelegramChatID
-	t.mu.Unlock()
+
+	tele, chatID := t.getTelegram()
 	if tele != nil && chatID != 0 {
 		tele.SendLog(chatID, msg)
 	}
 }
 
 func (t *Tracker) startWork(reason string) {
+	var msg string
+	var tele *TelegramNotifier
+	var chatID int64
+
 	t.mu.Lock()
-	defer t.mu.Unlock()
 	if t.ended || t.running || t.pausedManually || t.locked {
+		t.mu.Unlock()
 		return
 	}
 	now := time.Now()
@@ -141,18 +147,26 @@ func (t *Tracker) startWork(reason string) {
 	t.workStartedAt = now
 	t.lastStateAt = now
 	t.warned = false
-	msg := fmt.Sprintf("▶️ Подсчет рабочего времени запущен (%s)", reason)
+	msg = fmt.Sprintf("▶️ Подсчет рабочего времени запущен (%s)", reason)
+	tele = t.tele
+	chatID = t.cfg.TelegramChatID
+	t.mu.Unlock()
+
 	log.Println(msg)
-	if t.tele != nil && t.cfg.TelegramChatID != 0 {
-		t.tele.SendLog(t.cfg.TelegramChatID, msg)
-		t.tele.RefreshControls(t)
+	if tele != nil && chatID != 0 {
+		tele.SendLog(chatID, msg)
+		tele.RefreshControls(t)
 	}
 }
 
 func (t *Tracker) stopWork(reason string) {
+	var msg string
+	var tele *TelegramNotifier
+	var chatID int64
+
 	t.mu.Lock()
-	defer t.mu.Unlock()
 	if !t.running {
+		t.mu.Unlock()
 		return
 	}
 	now := time.Now()
@@ -160,47 +174,56 @@ func (t *Tracker) stopWork(reason string) {
 	t.running = false
 	t.lastStateAt = now
 	t.warned = false
-	msg := fmt.Sprintf("⏸ Подсчет рабочего времени остановлен (%s). Итого: %s", reason, formatDuration(t.accumulated+t.manualAdded))
+	total := formatDuration(t.currentTotalLocked(now))
+	msg = fmt.Sprintf("⏸ Подсчет рабочего времени остановлен (%s). Итого: %s", reason, total)
+	tele = t.tele
+	chatID = t.cfg.TelegramChatID
+	t.mu.Unlock()
+
 	log.Println(msg)
-	if t.tele != nil && t.cfg.TelegramChatID != 0 {
-		t.tele.SendLog(t.cfg.TelegramChatID, msg)
-		t.tele.RefreshControls(t)
+	if tele != nil && chatID != 0 {
+		tele.SendLog(chatID, msg)
+		tele.RefreshControls(t)
 	}
 }
 
 func (t *Tracker) setManualPause(paused bool) {
+	var msg string
+	var tele *TelegramNotifier
+	var chatID int64
+
 	t.mu.Lock()
 	if t.ended {
 		t.mu.Unlock()
 		return
 	}
-	wasRunning := t.running
 	now := time.Now()
+
 	if paused {
-		t.pausedManually = true
-		if wasRunning {
+		if t.running {
 			t.accumulated += now.Sub(t.workStartedAt)
 			t.running = false
 		}
+		t.pausedManually = true
+		msg = "⏸ Ручная пауза включена"
 	} else {
 		t.pausedManually = false
-		if !t.locked {
+		if !t.locked && !t.running {
 			t.running = true
 			t.workStartedAt = now
 		}
+		msg = "▶️ Ручная пауза снята"
 	}
+
 	t.lastStateAt = now
 	t.warned = false
-	tele := t.tele
-	chatID := t.cfg.TelegramChatID
+	tele = t.tele
+	chatID = t.cfg.TelegramChatID
 	t.mu.Unlock()
 
-	if paused {
-		t.logf("⏸ Ручная пауза включена")
-	} else {
-		t.logf("▶️ Ручная пауза снята")
-	}
+	log.Println(msg)
 	if tele != nil && chatID != 0 {
+		tele.SendLog(chatID, msg)
 		tele.RefreshControls(t)
 	}
 }
@@ -209,47 +232,74 @@ func (t *Tracker) addTime(d time.Duration, source string) {
 	if d <= 0 {
 		return
 	}
+
+	var total string
+	var tele *TelegramNotifier
+	var chatID int64
+
 	t.mu.Lock()
 	t.manualAdded += d
 	t.lastStateAt = time.Now()
-	total := t.currentTotalLocked(time.Now())
+	total = formatDuration(t.currentTotalLocked(time.Now()))
+	tele = t.tele
+	chatID = t.cfg.TelegramChatID
 	t.mu.Unlock()
-	t.logf("➕ Добавлено времени: %s (%s). Итого: %s", formatDuration(d), source, formatDuration(total))
+
+	msg := fmt.Sprintf("➕ Добавлено времени: %s (%s). Итого: %s", formatDuration(d), source, total)
+	log.Println(msg)
+	if tele != nil && chatID != 0 {
+		tele.SendLog(chatID, msg)
+		tele.RefreshControls(t)
+	}
 }
 
 func (t *Tracker) endSession(reason string) SessionSummary {
+	var msg string
+	var tele *TelegramNotifier
+	var chatID int64
+	var summary SessionSummary
+
 	t.mu.Lock()
-	defer t.mu.Unlock()
-	if t.ended {
-		return t.summaryLocked(time.Now())
-	}
 	now := time.Now()
-	if t.running {
-		t.accumulated += now.Sub(t.workStartedAt)
-		t.running = false
+	if !t.ended {
+		if t.running {
+			t.accumulated += now.Sub(t.workStartedAt)
+			t.running = false
+		}
+		t.pausedManually = false
+		t.ended = true
+		t.lastStateAt = now
+		msg = fmt.Sprintf("🏁 Сессия завершена (%s). Рабочее время: %s", reason, formatDuration(t.currentTotalLocked(now)))
 	}
-	t.ended = true
-	t.lastStateAt = now
-	msg := fmt.Sprintf("🏁 Сессия завершена (%s). Рабочее время: %s", reason, formatDuration(t.accumulated+t.manualAdded))
-	log.Println(msg)
-	if t.tele != nil && t.cfg.TelegramChatID != 0 {
-		t.tele.SendLog(t.cfg.TelegramChatID, msg)
-		t.tele.RefreshControls(t)
+	summary = t.summaryLocked(now)
+	tele = t.tele
+	chatID = t.cfg.TelegramChatID
+	t.mu.Unlock()
+
+	if msg != "" {
+		log.Println(msg)
+		if tele != nil && chatID != 0 {
+			tele.SendLog(chatID, msg)
+			tele.RefreshControls(t)
+		}
 	}
-	return t.summaryLocked(now)
+
+	return summary
 }
 
 func (t *Tracker) HandleActivity(idle time.Duration) {
 	now := time.Now()
+
 	if idle < time.Second {
 		t.mu.Lock()
-		t.lastInputAt = now
 		paused := t.pausedManually
 		locked := t.locked
 		ended := t.ended
 		wasWarned := t.warned
 		t.warned = false
+		t.lastStateAt = now
 		t.mu.Unlock()
+
 		if ended {
 			return
 		}
@@ -295,14 +345,17 @@ func (t *Tracker) SetLocked(locked bool) {
 	}
 	paused := t.pausedManually
 	t.mu.Unlock()
+
 	if already {
 		return
 	}
+
 	if locked {
 		t.logf("🔒 Экран заблокирован")
 		t.stopWork("экран заблокирован")
 		return
 	}
+
 	t.logf("🔓 Экран разблокирован")
 	if !paused {
 		t.startWork("экран разблокирован")
@@ -310,8 +363,12 @@ func (t *Tracker) SetLocked(locked bool) {
 }
 
 func (t *Tracker) notifySoonPause(idle time.Duration) {
-	text := fmt.Sprintf("Нет активности уже %s. Через %s подсчет времени остановится.", formatDuration(idle), formatDuration(t.cfg.StopAfterWarn.Duration))
-	_ = sendDesktopNotification("Worktime tracker", text)
+	text := fmt.Sprintf(
+		"Нет активности уже %s. Через %s подсчет времени остановится.",
+		formatDuration(idle),
+		formatDuration(t.cfg.StopAfterWarn.Duration),
+	)
+	_ = sendDesktopNotification("Work Activity Tracker", text)
 	t.logf("⚠️ %s", text)
 }
 
@@ -343,9 +400,10 @@ func (t *Tracker) currentTotalLocked(now time.Time) time.Duration {
 }
 
 type TelegramNotifier struct {
-	bot             *tgbotapi.BotAPI
-	controlsMessage int
-	mu              sync.Mutex
+	bot *tgbotapi.BotAPI
+
+	mu                sync.Mutex
+	controlsMessageID int
 }
 
 func NewTelegramNotifier(token string) (*TelegramNotifier, error) {
@@ -361,39 +419,26 @@ func (n *TelegramNotifier) SendLog(chatID int64, text string) {
 	_, _ = n.bot.Send(msg)
 }
 
-func (n *TelegramNotifier) SendSessionStart(chatID int64, t *Tracker) {
-	s := t.Summary()
-	text := fmt.Sprintf("📅 Сессия стартовала \nСтарт: %s \n	Текущее состояние: %s \n Итого: %s", s.SessionStartedAt.Format(time.RFC3339), stateText(s), formatDuration(s.TotalWorked))
-	msg := tgbotapi.NewMessage(chatID, text)
-	msg.ReplyMarkup = n.controlsMarkup(s)
-	sent, err := n.bot.Send(msg)
-	if err == nil {
-		n.mu.Lock()
-		n.controlsMessage = sent.MessageID
-		n.mu.Unlock()
-	}
-}
-
-func (n *TelegramNotifier) RefreshControls(t *Tracker) {
-	s := t.Summary()
-	n.mu.Lock()
-	msgID := n.controlsMessage
-	n.mu.Unlock()
-	if msgID == 0 || t.cfg.TelegramChatID == 0 {
-		return
-	}
-	text := fmt.Sprintf("📅 Сессия \n Старт: %s \nСостояние: %s \nИтого: %s", s.SessionStartedAt.Format(time.RFC3339), stateText(s), formatDuration(s.TotalWorked))
-	edit := tgbotapi.NewEditMessageTextAndMarkup(t.cfg.TelegramChatID, msgID, text, n.controlsMarkup(s))
-	_, _ = n.bot.Send(edit)
+func (n *TelegramNotifier) sessionText(s SessionSummary) string {
+	return fmt.Sprintf(
+		"📅 Сессия\nСтарт: %s\nСостояние: %s\nИтого: %s",
+		s.SessionStartedAt.Format(time.RFC3339),
+		stateText(s),
+		formatDuration(s.TotalWorked),
+	)
 }
 
 func (n *TelegramNotifier) controlsMarkup(s SessionSummary) tgbotapi.InlineKeyboardMarkup {
 	stateBtnText := "⏸ Пауза"
 	stateBtnData := "pause"
-	if s.PausedManually || !s.Running {
+	if s.Ended {
+		stateBtnText = "🚫 Завершено"
+		stateBtnData = "noop"
+	} else if s.PausedManually || !s.Running {
 		stateBtnText = "▶️ Старт"
 		stateBtnData = "start"
 	}
+
 	buttons := [][]tgbotapi.InlineKeyboardButton{
 		{
 			tgbotapi.NewInlineKeyboardButtonData(stateBtnText, stateBtnData),
@@ -405,22 +450,75 @@ func (n *TelegramNotifier) controlsMarkup(s SessionSummary) tgbotapi.InlineKeybo
 			tgbotapi.NewInlineKeyboardButtonData("➕ 2ч", "add:2h"),
 		},
 	}
+
 	return tgbotapi.NewInlineKeyboardMarkup(buttons...)
 }
 
+func (n *TelegramNotifier) SendOrReplaceControls(chatID int64, tracker *Tracker) {
+	s := tracker.Summary()
+	text := n.sessionText(s)
+	markup := n.controlsMarkup(s)
+
+	n.mu.Lock()
+	msgID := n.controlsMessageID
+	n.mu.Unlock()
+
+	if msgID == 0 {
+		msg := tgbotapi.NewMessage(chatID, text)
+		msg.ReplyMarkup = markup
+		sent, err := n.bot.Send(msg)
+		if err == nil {
+			n.mu.Lock()
+			n.controlsMessageID = sent.MessageID
+			n.mu.Unlock()
+		}
+		return
+	}
+
+	edit := tgbotapi.NewEditMessageTextAndMarkup(chatID, msgID, text, markup)
+	_, err := n.bot.Send(edit)
+	if err != nil {
+		msg := tgbotapi.NewMessage(chatID, text)
+		msg.ReplyMarkup = markup
+		sent, err2 := n.bot.Send(msg)
+		if err2 == nil {
+			n.mu.Lock()
+			n.controlsMessageID = sent.MessageID
+			n.mu.Unlock()
+		}
+	}
+}
+
+func (n *TelegramNotifier) RefreshControls(tracker *Tracker) {
+	tele, chatID := tracker.getTelegram()
+	if tele == nil || chatID == 0 {
+		return
+	}
+	n.SendOrReplaceControls(chatID, tracker)
+}
+
 func (n *TelegramNotifier) Run(ctx context.Context, tracker *Tracker, chatID int64) {
-	updates := n.bot.GetUpdatesChan(tgbotapi.NewUpdate(0))
+	updateConfig := tgbotapi.NewUpdate(0)
+	updateConfig.Timeout = 30
+
+	updates := n.bot.GetUpdatesChan(updateConfig)
+
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case upd := <-updates:
+		case upd, ok := <-updates:
+			if !ok {
+				return
+			}
+
 			if upd.Message != nil {
 				if upd.Message.Chat == nil || upd.Message.Chat.ID != chatID {
 					continue
 				}
 				n.handleMessage(tracker, upd.Message)
 			}
+
 			if upd.CallbackQuery != nil {
 				if upd.CallbackQuery.Message == nil || upd.CallbackQuery.Message.Chat == nil || upd.CallbackQuery.Message.Chat.ID != chatID {
 					continue
@@ -433,13 +531,19 @@ func (n *TelegramNotifier) Run(ctx context.Context, tracker *Tracker, chatID int
 
 func (n *TelegramNotifier) handleMessage(tracker *Tracker, msg *tgbotapi.Message) {
 	text := strings.TrimSpace(msg.Text)
+
 	switch {
 	case text == "/start":
-		n.SendSessionStart(msg.Chat.ID, tracker)
+		n.SendOrReplaceControls(msg.Chat.ID, tracker)
+
 	case text == "/status":
 		s := tracker.Summary()
-		reply := tgbotapi.NewMessage(msg.Chat.ID, fmt.Sprintf("Состояние: %s \n	Итого: %s", stateText(s), formatDuration(s.TotalWorked)))
+		reply := tgbotapi.NewMessage(
+			msg.Chat.ID,
+			fmt.Sprintf("Состояние: %s\nИтого: %s", stateText(s), formatDuration(s.TotalWorked)),
+		)
 		_, _ = n.bot.Send(reply)
+
 	case strings.HasPrefix(text, "/add "):
 		v := strings.TrimSpace(strings.TrimPrefix(text, "/add "))
 		d, err := time.ParseDuration(v)
@@ -449,12 +553,16 @@ func (n *TelegramNotifier) handleMessage(tracker *Tracker, msg *tgbotapi.Message
 		}
 		tracker.addTime(d, "telegram command")
 		n.RefreshControls(tracker)
+
 	case text == "/pause":
 		tracker.setManualPause(true)
+
 	case text == "/resume":
 		tracker.setManualPause(false)
+
 	case text == "/end":
 		tracker.endSession("telegram command")
+
 	default:
 		_, _ = n.bot.Send(tgbotapi.NewMessage(msg.Chat.ID, "Команды: /start, /status, /add 1h30m, /pause, /resume, /end"))
 	}
@@ -462,7 +570,9 @@ func (n *TelegramNotifier) handleMessage(tracker *Tracker, msg *tgbotapi.Message
 
 func (n *TelegramNotifier) handleCallback(tracker *Tracker, q *tgbotapi.CallbackQuery) {
 	data := q.Data
+
 	switch {
+	case data == "noop":
 	case data == "pause":
 		tracker.setManualPause(true)
 	case data == "start":
@@ -475,6 +585,7 @@ func (n *TelegramNotifier) handleCallback(tracker *Tracker, q *tgbotapi.Callback
 			tracker.addTime(d, "telegram button")
 		}
 	}
+
 	answer := tgbotapi.NewCallback(q.ID, "OK")
 	_, _ = n.bot.Request(answer)
 	n.RefreshControls(tracker)
@@ -486,7 +597,10 @@ type App struct {
 }
 
 func NewApp(cfg Config) *App {
-	return &App{cfg: cfg, tracker: NewTracker(cfg)}
+	return &App{
+		cfg:     cfg,
+		tracker: NewTracker(cfg),
+	}
 }
 
 func (a *App) Run(ctx context.Context) error {
@@ -498,7 +612,7 @@ func (a *App) Run(ctx context.Context) error {
 			return fmt.Errorf("telegram init: %w", err)
 		}
 		a.tracker.SetTelegram(tele)
-		tele.SendSessionStart(a.cfg.TelegramChatID, a.tracker)
+		tele.SendOrReplaceControls(a.cfg.TelegramChatID, a.tracker)
 		go tele.Run(ctx, a.tracker, a.cfg.TelegramChatID)
 	}
 
@@ -517,43 +631,56 @@ func (a *App) Run(ctx context.Context) error {
 
 func (a *App) runHTTP(ctx context.Context) {
 	mux := http.NewServeMux()
+
 	mux.HandleFunc("/status", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, a.tracker.Summary())
 	})
+
 	mux.HandleFunc("/add", func(w http.ResponseWriter, r *http.Request) {
 		minutesStr := r.URL.Query().Get("minutes")
 		if minutesStr == "" {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "minutes is required"})
 			return
 		}
+
 		minutes, err := strconv.Atoi(minutesStr)
 		if err != nil || minutes <= 0 {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "minutes must be positive integer"})
 			return
 		}
+
 		a.tracker.addTime(time.Duration(minutes)*time.Minute, "http api")
 		writeJSON(w, http.StatusOK, a.tracker.Summary())
 	})
+
 	mux.HandleFunc("/pause", func(w http.ResponseWriter, r *http.Request) {
 		a.tracker.setManualPause(true)
 		writeJSON(w, http.StatusOK, a.tracker.Summary())
 	})
+
 	mux.HandleFunc("/start", func(w http.ResponseWriter, r *http.Request) {
 		a.tracker.setManualPause(false)
 		writeJSON(w, http.StatusOK, a.tracker.Summary())
 	})
+
 	mux.HandleFunc("/end", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, a.tracker.endSession("http api"))
 	})
 
-	srv := &http.Server{Addr: fmt.Sprintf(":%d", a.cfg.HTTPPort), Handler: mux}
+	srv := &http.Server{
+		Addr:    fmt.Sprintf(":%d", a.cfg.HTTPPort),
+		Handler: mux,
+	}
+
 	go func() {
 		<-ctx.Done()
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		_ = srv.Shutdown(shutdownCtx)
 	}()
+
 	a.tracker.logf("🌐 HTTP API запущен на :%d", a.cfg.HTTPPort)
+
 	if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		a.tracker.logf("HTTP API ошибка: %v", err)
 	}
@@ -562,6 +689,7 @@ func (a *App) runHTTP(ctx context.Context) {
 func (a *App) runIdlePolling(ctx context.Context) {
 	ticker := time.NewTicker(a.cfg.PollInterval.Duration)
 	defer ticker.Stop()
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -580,6 +708,7 @@ func (a *App) runIdlePolling(ctx context.Context) {
 func (a *App) runLockPolling(ctx context.Context) {
 	ticker := time.NewTicker(a.cfg.PollInterval.Duration)
 	defer ticker.Stop()
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -607,10 +736,12 @@ func getIdleDuration() (time.Duration, error) {
 	if call.Err != nil {
 		return 0, call.Err
 	}
+
 	var ms uint64
 	if err := dbus.Store(call.Body, &ms); err != nil {
 		return 0, err
 	}
+
 	return time.Duration(ms) * time.Millisecond, nil
 }
 
@@ -645,19 +776,25 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 
 func printConfig(cfg Config) {
 	b, _ := json.MarshalIndent(cfg, "", "  ")
-	fmt.Printf("CONFIG: \n	%s \n", string(b))
+	fmt.Printf("CONFIG:\n%s\n", string(b))
 }
 
 func formatDuration(d time.Duration) string {
 	if d < 0 {
 		d = 0
 	}
+	if d == 0 {
+		return "0s"
+	}
+
 	d = d.Round(time.Second)
+
 	h := d / time.Hour
 	d -= h * time.Hour
 	m := d / time.Minute
 	d -= m * time.Minute
 	s := d / time.Second
+
 	parts := make([]string, 0, 3)
 	if h > 0 {
 		parts = append(parts, fmt.Sprintf("%dh", h))
@@ -665,7 +802,10 @@ func formatDuration(d time.Duration) string {
 	if m > 0 || h > 0 {
 		parts = append(parts, fmt.Sprintf("%dm", m))
 	}
-	parts = append(parts, fmt.Sprintf("%ds", s))
+	if s > 0 || len(parts) == 0 {
+		parts = append(parts, fmt.Sprintf("%ds", s))
+	}
+
 	return strings.Join(parts, " ")
 }
 
@@ -693,16 +833,26 @@ func defaultConfig() Config {
 }
 
 func resolveConfigPath(explicit string) string {
+	candidates := make([]string, 0, 3)
+
 	if explicit != "" {
-		return explicit
+		candidates = append(candidates, explicit)
+	} else {
+		if cwd, err := os.Getwd(); err == nil {
+			candidates = append(candidates, filepath.Join(cwd, defaultConfigName))
+		}
+		if exe, err := os.Executable(); err == nil {
+			candidates = append(candidates, filepath.Join(filepath.Dir(exe), defaultConfigName))
+		}
+		candidates = append(candidates, defaultConfigName)
 	}
-	cwd, err := os.Getwd()
-	if err == nil {
-		candidate := filepath.Join(cwd, defaultConfigName)
+
+	for _, candidate := range candidates {
 		if _, err := os.Stat(candidate); err == nil {
 			return candidate
 		}
 	}
+
 	return ""
 }
 
@@ -711,13 +861,16 @@ func loadConfig(path string) (Config, error) {
 	if path == "" {
 		return cfg, nil
 	}
+
 	b, err := os.ReadFile(path)
 	if err != nil {
 		return cfg, err
 	}
+
 	if err := json.Unmarshal(b, &cfg); err != nil {
 		return cfg, err
 	}
+
 	if cfg.IdleWarnAfter.Duration <= 0 {
 		cfg.IdleWarnAfter = Duration{Duration: defaultIdleWarnAfter}
 	}
@@ -727,6 +880,7 @@ func loadConfig(path string) (Config, error) {
 	if cfg.PollInterval.Duration <= 0 {
 		cfg.PollInterval = Duration{Duration: defaultPollInterval}
 	}
+
 	return cfg, nil
 }
 
@@ -734,6 +888,7 @@ func loadConfigFromArgs(args []string) (Config, error) {
 	configPath := ""
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
+
 		switch {
 		case arg == "-config" || arg == "--config":
 			if i+1 >= len(args) {
@@ -741,12 +896,15 @@ func loadConfigFromArgs(args []string) (Config, error) {
 			}
 			configPath = args[i+1]
 			i++
+
 		case strings.HasPrefix(arg, "-config="):
 			configPath = strings.TrimPrefix(arg, "-config=")
+
 		case strings.HasPrefix(arg, "--config="):
 			configPath = strings.TrimPrefix(arg, "--config=")
 		}
 	}
+
 	return loadConfig(resolveConfigPath(configPath))
 }
 
@@ -794,6 +952,7 @@ func overrideFromFlags(cfg *Config, args []string) error {
 	if *pollInterval > 0 {
 		cfg.PollInterval = Duration{Duration: *pollInterval}
 	}
+
 	return nil
 }
 
@@ -802,6 +961,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("load config: %v", err)
 	}
+
 	if err := overrideFromFlags(&cfg, os.Args); err != nil {
 		log.Fatalf("parse flags: %v", err)
 	}
