@@ -8,10 +8,10 @@ import (
 	"fmt"
 	"log"
 	"net/http"
-	"net/url"
 	"os"
 	"os/exec"
 	"os/signal"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -26,15 +26,48 @@ const (
 	defaultIdleWarnAfter = 2 * time.Minute
 	defaultStopAfterWarn = 1 * time.Minute
 	defaultPollInterval  = 5 * time.Second
+	defaultConfigName    = "config.json"
 )
 
+type Duration struct {
+	time.Duration
+}
+
+func (d *Duration) UnmarshalJSON(b []byte) error {
+	if string(b) == "null" {
+		return nil
+	}
+
+	var s string
+	if err := json.Unmarshal(b, &s); err == nil {
+		parsed, err := time.ParseDuration(s)
+		if err != nil {
+			return fmt.Errorf("parse duration %q: %w", s, err)
+		}
+		d.Duration = parsed
+		return nil
+	}
+
+	var n int64
+	if err := json.Unmarshal(b, &n); err == nil {
+		d.Duration = time.Duration(n)
+		return nil
+	}
+
+	return fmt.Errorf("duration must be string like \"2m\" or integer nanoseconds")
+}
+
+func (d Duration) MarshalJSON() ([]byte, error) {
+	return json.Marshal(d.String())
+}
+
 type Config struct {
-	TelegramToken string        `json:"telegram_token"`
-	TelegramChatID int64        `json:"telegram_chat_id"`
-	HTTPPort      int           `json:"http_port"`
-	IdleWarnAfter time.Duration `json:"idle_warn_after"`
-	StopAfterWarn time.Duration `json:"stop_after_warn"`
-	PollInterval  time.Duration `json:"poll_interval"`
+	TelegramToken  string   `json:"telegram_token"`
+	TelegramChatID int64    `json:"telegram_chat_id"`
+	HTTPPort       int      `json:"http_port"`
+	IdleWarnAfter  Duration `json:"idle_warn_after"`
+	StopAfterWarn  Duration `json:"stop_after_warn"`
+	PollInterval   Duration `json:"poll_interval"`
 }
 
 type SessionSummary struct {
@@ -45,6 +78,7 @@ type SessionSummary struct {
 	PausedManually   bool          `json:"paused_manually"`
 	Locked           bool          `json:"locked"`
 	LastStateChange  time.Time     `json:"last_state_change"`
+	Ended            bool          `json:"ended"`
 }
 
 type Tracker struct {
@@ -99,7 +133,7 @@ func (t *Tracker) logf(format string, args ...any) {
 func (t *Tracker) startWork(reason string) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	if t.ended || t.running || t.pausedManually {
+	if t.ended || t.running || t.pausedManually || t.locked {
 		return
 	}
 	now := time.Now()
@@ -233,8 +267,8 @@ func (t *Tracker) HandleActivity(idle time.Duration) {
 		t.mu.Unlock()
 		return
 	}
-	needWarn := !t.warned && idle >= t.cfg.IdleWarnAfter
-	needStop := t.running && idle >= t.cfg.IdleWarnAfter+t.cfg.StopAfterWarn
+	needWarn := !t.warned && idle >= t.cfg.IdleWarnAfter.Duration
+	needStop := t.running && idle >= t.cfg.IdleWarnAfter.Duration+t.cfg.StopAfterWarn.Duration
 	if needWarn {
 		t.warned = true
 	}
@@ -276,7 +310,7 @@ func (t *Tracker) SetLocked(locked bool) {
 }
 
 func (t *Tracker) notifySoonPause(idle time.Duration) {
-	text := fmt.Sprintf("Нет активности уже %s. Через %s подсчет времени остановится.", formatDuration(idle), formatDuration(t.cfg.StopAfterWarn))
+	text := fmt.Sprintf("Нет активности уже %s. Через %s подсчет времени остановится.", formatDuration(idle), formatDuration(t.cfg.StopAfterWarn.Duration))
 	_ = sendDesktopNotification("Worktime tracker", text)
 	t.logf("⚠️ %s", text)
 }
@@ -296,6 +330,7 @@ func (t *Tracker) summaryLocked(now time.Time) SessionSummary {
 		PausedManually:   t.pausedManually,
 		Locked:           t.locked,
 		LastStateChange:  t.lastStateAt,
+		Ended:            t.ended,
 	}
 }
 
@@ -328,7 +363,7 @@ func (n *TelegramNotifier) SendLog(chatID int64, text string) {
 
 func (n *TelegramNotifier) SendSessionStart(chatID int64, t *Tracker) {
 	s := t.Summary()
-	text := fmt.Sprintf("📅 Сессия стартовала\nСтарт: %s\nТекущее состояние: %s\nИтого: %s", s.SessionStartedAt.Format(time.RFC3339), stateText(s), formatDuration(s.TotalWorked))
+	text := fmt.Sprintf("📅 Сессия стартовала \nСтарт: %s \n	Текущее состояние: %s \n Итого: %s", s.SessionStartedAt.Format(time.RFC3339), stateText(s), formatDuration(s.TotalWorked))
 	msg := tgbotapi.NewMessage(chatID, text)
 	msg.ReplyMarkup = n.controlsMarkup(s)
 	sent, err := n.bot.Send(msg)
@@ -347,7 +382,7 @@ func (n *TelegramNotifier) RefreshControls(t *Tracker) {
 	if msgID == 0 || t.cfg.TelegramChatID == 0 {
 		return
 	}
-	text := fmt.Sprintf("📅 Сессия\nСтарт: %s\nСостояние: %s\nИтого: %s", s.SessionStartedAt.Format(time.RFC3339), stateText(s), formatDuration(s.TotalWorked))
+	text := fmt.Sprintf("📅 Сессия \n Старт: %s \nСостояние: %s \nИтого: %s", s.SessionStartedAt.Format(time.RFC3339), stateText(s), formatDuration(s.TotalWorked))
 	edit := tgbotapi.NewEditMessageTextAndMarkup(t.cfg.TelegramChatID, msgID, text, n.controlsMarkup(s))
 	_, _ = n.bot.Send(edit)
 }
@@ -403,7 +438,7 @@ func (n *TelegramNotifier) handleMessage(tracker *Tracker, msg *tgbotapi.Message
 		n.SendSessionStart(msg.Chat.ID, tracker)
 	case text == "/status":
 		s := tracker.Summary()
-		reply := tgbotapi.NewMessage(msg.Chat.ID, fmt.Sprintf("Состояние: %s\nИтого: %s", stateText(s), formatDuration(s.TotalWorked)))
+		reply := tgbotapi.NewMessage(msg.Chat.ID, fmt.Sprintf("Состояние: %s \n	Итого: %s", stateText(s), formatDuration(s.TotalWorked)))
 		_, _ = n.bot.Send(reply)
 	case strings.HasPrefix(text, "/add "):
 		v := strings.TrimSpace(strings.TrimPrefix(text, "/add "))
@@ -525,7 +560,7 @@ func (a *App) runHTTP(ctx context.Context) {
 }
 
 func (a *App) runIdlePolling(ctx context.Context) {
-	ticker := time.NewTicker(a.cfg.PollInterval)
+	ticker := time.NewTicker(a.cfg.PollInterval.Duration)
 	defer ticker.Stop()
 	for {
 		select {
@@ -543,7 +578,7 @@ func (a *App) runIdlePolling(ctx context.Context) {
 }
 
 func (a *App) runLockPolling(ctx context.Context) {
-	ticker := time.NewTicker(a.cfg.PollInterval)
+	ticker := time.NewTicker(a.cfg.PollInterval.Duration)
 	defer ticker.Stop()
 	for {
 		select {
@@ -594,7 +629,6 @@ func isScreenLocked() (bool, error) {
 		}
 	}
 
-	// Fallback for environments where org.gnome.ScreenSaver is not exported.
 	return false, nil
 }
 
@@ -611,7 +645,7 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 
 func printConfig(cfg Config) {
 	b, _ := json.MarshalIndent(cfg, "", "  ")
-	fmt.Printf("CONFIG:\n%s\n", string(b))
+	fmt.Printf("CONFIG: \n	%s \n", string(b))
 }
 
 func formatDuration(d time.Duration) string {
@@ -637,6 +671,8 @@ func formatDuration(d time.Duration) string {
 
 func stateText(s SessionSummary) string {
 	switch {
+	case s.Ended:
+		return "сессия завершена"
 	case s.PausedManually:
 		return "ручная пауза"
 	case s.Locked:
@@ -648,12 +684,30 @@ func stateText(s SessionSummary) string {
 	}
 }
 
-func loadConfig(path string) (Config, error) {
-	cfg := Config{
-		IdleWarnAfter: defaultIdleWarnAfter,
-		StopAfterWarn: defaultStopAfterWarn,
-		PollInterval:  defaultPollInterval,
+func defaultConfig() Config {
+	return Config{
+		IdleWarnAfter: Duration{Duration: defaultIdleWarnAfter},
+		StopAfterWarn: Duration{Duration: defaultStopAfterWarn},
+		PollInterval:  Duration{Duration: defaultPollInterval},
 	}
+}
+
+func resolveConfigPath(explicit string) string {
+	if explicit != "" {
+		return explicit
+	}
+	cwd, err := os.Getwd()
+	if err == nil {
+		candidate := filepath.Join(cwd, defaultConfigName)
+		if _, err := os.Stat(candidate); err == nil {
+			return candidate
+		}
+	}
+	return ""
+}
+
+func loadConfig(path string) (Config, error) {
+	cfg := defaultConfig()
 	if path == "" {
 		return cfg, nil
 	}
@@ -664,27 +718,63 @@ func loadConfig(path string) (Config, error) {
 	if err := json.Unmarshal(b, &cfg); err != nil {
 		return cfg, err
 	}
-	if cfg.IdleWarnAfter <= 0 {
-		cfg.IdleWarnAfter = defaultIdleWarnAfter
+	if cfg.IdleWarnAfter.Duration <= 0 {
+		cfg.IdleWarnAfter = Duration{Duration: defaultIdleWarnAfter}
 	}
-	if cfg.StopAfterWarn <= 0 {
-		cfg.StopAfterWarn = defaultStopAfterWarn
+	if cfg.StopAfterWarn.Duration <= 0 {
+		cfg.StopAfterWarn = Duration{Duration: defaultStopAfterWarn}
 	}
-	if cfg.PollInterval <= 0 {
-		cfg.PollInterval = defaultPollInterval
+	if cfg.PollInterval.Duration <= 0 {
+		cfg.PollInterval = Duration{Duration: defaultPollInterval}
 	}
 	return cfg, nil
 }
 
-func overrideFromFlags(cfg *Config) {
+func loadConfigFromArgs(args []string) (Config, error) {
+	configPath := ""
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		switch {
+		case arg == "-config" || arg == "--config":
+			if i+1 >= len(args) {
+				return Config{}, fmt.Errorf("%s requires value", arg)
+			}
+			configPath = args[i+1]
+			i++
+		case strings.HasPrefix(arg, "-config="):
+			configPath = strings.TrimPrefix(arg, "-config=")
+		case strings.HasPrefix(arg, "--config="):
+			configPath = strings.TrimPrefix(arg, "--config=")
+		}
+	}
+	return loadConfig(resolveConfigPath(configPath))
+}
+
+func overrideFromFlags(cfg *Config, args []string) error {
+	fs := flag.NewFlagSet(args[0], flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+
 	var (
-		telegramToken = flag.String("telegram-token", "", "telegram bot token")
-		telegramChatID = flag.Int64("telegram-chat-id", 0, "telegram chat id")
-		httpPort = flag.Int("http-port", 0, "http api port, 0 disables api")
-		idleWarn = flag.Duration("idle-warn-after", 0, "time without activity before warning")
-		stopAfter = flag.Duration("stop-after-warn", 0, "time after warning before stop")
+		configPath     = fs.String("config", "", "path to config.json")
+		telegramToken  = fs.String("telegram-token", "", "telegram bot token")
+		telegramChatID = fs.Int64("telegram-chat-id", 0, "telegram chat id")
+		httpPort       = fs.Int("http-port", 0, "http api port, 0 disables api")
+		idleWarn       = fs.Duration("idle-warn-after", 0, "time without activity before warning")
+		stopAfter      = fs.Duration("stop-after-warn", 0, "time after warning before stop")
+		pollInterval   = fs.Duration("poll-interval", 0, "idle/lock polling interval")
 	)
-	flag.Parse()
+
+	if err := fs.Parse(args[1:]); err != nil {
+		return err
+	}
+
+	if *configPath != "" {
+		loaded, err := loadConfig(*configPath)
+		if err != nil {
+			return err
+		}
+		*cfg = loaded
+	}
 
 	if *telegramToken != "" {
 		cfg.TelegramToken = *telegramToken
@@ -696,31 +786,25 @@ func overrideFromFlags(cfg *Config) {
 		cfg.HTTPPort = *httpPort
 	}
 	if *idleWarn > 0 {
-		cfg.IdleWarnAfter = *idleWarn
+		cfg.IdleWarnAfter = Duration{Duration: *idleWarn}
 	}
 	if *stopAfter > 0 {
-		cfg.StopAfterWarn = *stopAfter
+		cfg.StopAfterWarn = Duration{Duration: *stopAfter}
 	}
+	if *pollInterval > 0 {
+		cfg.PollInterval = Duration{Duration: *pollInterval}
+	}
+	return nil
 }
 
 func main() {
-	configPath := ""
-	for i, arg := range os.Args {
-		if arg == "-config" || arg == "--config" {
-			if i+1 < len(os.Args) {
-				configPath = os.Args[i+1]
-			}
-		}
-		if strings.HasPrefix(arg, "--config=") {
-			configPath = strings.TrimPrefix(arg, "--config=")
-		}
-	}
-
-	cfg, err := loadConfig(configPath)
+	cfg, err := loadConfigFromArgs(os.Args[1:])
 	if err != nil {
 		log.Fatalf("load config: %v", err)
 	}
-	overrideFromFlags(&cfg)
+	if err := overrideFromFlags(&cfg, os.Args); err != nil {
+		log.Fatalf("parse flags: %v", err)
+	}
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
@@ -730,26 +814,3 @@ func main() {
 		log.Fatalf("run: %v", err)
 	}
 }
-
-// Example config.json:
-// {
-//   "telegram_token": "",
-//   "telegram_chat_id": 0,
-//   "http_port": 8080,
-//   "idle_warn_after": 120000000000,
-//   "stop_after_warn": 60000000000,
-//   "poll_interval": 5000000000
-// }
-
-// Example HTTP calls:
-// curl 'http://127.0.0.1:8080/status'
-// curl 'http://127.0.0.1:8080/add?minutes=90'
-// curl -X POST 'http://127.0.0.1:8080/pause'
-// curl -X POST 'http://127.0.0.1:8080/start'
-// curl -X POST 'http://127.0.0.1:8080/end'
-
-// Helper: build URL for manual integrations.
-func addURL(port int, minutes int) string {
-	return (&url.URL{Scheme: "http", Host: fmt.Sprintf("127.0.0.1:%d", port), Path: "/add", RawQuery: url.Values{"minutes": []string{strconv.Itoa(minutes)}}.Encode()}).String()
-}
-

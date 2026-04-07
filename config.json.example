@@ -1,0 +1,8 @@
+{
+  "telegram_token": "",
+  "telegram_chat_id": 0,
+  "http_port": 0,
+  "idle_warn_after": 120000000000,
+  "stop_after_warn": 60000000000,
+  "poll_interval": 5000000000
+}
