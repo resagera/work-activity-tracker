@@ -72,7 +72,8 @@ type Config struct {
 
 type SessionSummary struct {
 	SessionStartedAt time.Time     `json:"session_started_at"`
-	TotalWorked      time.Duration `json:"total_worked"`
+	TotalActive      time.Duration `json:"total_active"`
+	TotalInactive    time.Duration `json:"total_inactive"`
 	TotalAdded       time.Duration `json:"total_added"`
 	Running          bool          `json:"running"`
 	PausedManually   bool          `json:"paused_manually"`
@@ -87,15 +88,22 @@ type Tracker struct {
 	cfg Config
 
 	sessionStartedAt time.Time
-	workStartedAt    time.Time
-	accumulated      time.Duration
-	manualAdded      time.Duration
+	lastStateAt      time.Time
 
-	running        bool
+	// active accounting
+	running       bool
+	workStartedAt time.Time
+	activeTotal   time.Duration
+
+	// inactive accounting
+	inactiveStartedAt time.Time
+	inactiveTotal     time.Duration
+
+	manualAdded time.Duration
+
 	pausedManually bool
 	locked         bool
 	warned         bool
-	lastStateAt    time.Time
 	ended          bool
 
 	tele *TelegramNotifier
@@ -132,6 +140,21 @@ func (t *Tracker) logf(format string, args ...any) {
 	}
 }
 
+func (t *Tracker) ensureInactiveStartedLocked(now time.Time) {
+	if !t.inactiveStartedAt.IsZero() {
+		return
+	}
+	t.inactiveStartedAt = now
+}
+
+func (t *Tracker) closeInactiveLocked(now time.Time) {
+	if t.inactiveStartedAt.IsZero() {
+		return
+	}
+	t.inactiveTotal += now.Sub(t.inactiveStartedAt)
+	t.inactiveStartedAt = time.Time{}
+}
+
 func (t *Tracker) startWork(reason string) {
 	var msg string
 	var tele *TelegramNotifier
@@ -142,12 +165,21 @@ func (t *Tracker) startWork(reason string) {
 		t.mu.Unlock()
 		return
 	}
+
 	now := time.Now()
+	t.closeInactiveLocked(now)
 	t.running = true
 	t.workStartedAt = now
 	t.lastStateAt = now
 	t.warned = false
-	msg = fmt.Sprintf("▶️ Подсчет рабочего времени запущен (%s)", reason)
+
+	msg = fmt.Sprintf(
+		"▶️ Подсчет рабочего времени запущен (%s). Активность: %s, неактивность: %s",
+		reason,
+		formatDuration(t.currentActiveLocked(now)),
+		formatDuration(t.currentInactiveLocked(now)),
+	)
+
 	tele = t.tele
 	chatID = t.cfg.TelegramChatID
 	t.mu.Unlock()
@@ -169,13 +201,21 @@ func (t *Tracker) stopWork(reason string) {
 		t.mu.Unlock()
 		return
 	}
+
 	now := time.Now()
-	t.accumulated += now.Sub(t.workStartedAt)
+	t.activeTotal += now.Sub(t.workStartedAt)
 	t.running = false
+	t.ensureInactiveStartedLocked(now)
 	t.lastStateAt = now
 	t.warned = false
-	total := formatDuration(t.currentTotalLocked(now))
-	msg = fmt.Sprintf("⏸ Подсчет рабочего времени остановлен (%s). Итого: %s", reason, total)
+
+	msg = fmt.Sprintf(
+		"⏸ Подсчет рабочего времени остановлен (%s). Активность: %s, неактивность: %s",
+		reason,
+		formatDuration(t.currentActiveLocked(now)),
+		formatDuration(t.currentInactiveLocked(now)),
+	)
+
 	tele = t.tele
 	chatID = t.cfg.TelegramChatID
 	t.mu.Unlock()
@@ -197,18 +237,20 @@ func (t *Tracker) setManualPause(paused bool) {
 		t.mu.Unlock()
 		return
 	}
-	now := time.Now()
 
+	now := time.Now()
 	if paused {
 		if t.running {
-			t.accumulated += now.Sub(t.workStartedAt)
+			t.activeTotal += now.Sub(t.workStartedAt)
 			t.running = false
 		}
 		t.pausedManually = true
+		t.ensureInactiveStartedLocked(now)
 		msg = "⏸ Ручная пауза включена"
 	} else {
 		t.pausedManually = false
 		if !t.locked && !t.running {
+			t.closeInactiveLocked(now)
 			t.running = true
 			t.workStartedAt = now
 		}
@@ -233,19 +275,24 @@ func (t *Tracker) addTime(d time.Duration, source string) {
 		return
 	}
 
-	var total string
 	var tele *TelegramNotifier
 	var chatID int64
+	var active, inactive string
 
 	t.mu.Lock()
 	t.manualAdded += d
-	t.lastStateAt = time.Now()
-	total = formatDuration(t.currentTotalLocked(time.Now()))
+	now := time.Now()
+	t.lastStateAt = now
+	active = formatDuration(t.currentActiveLocked(now))
+	inactive = formatDuration(t.currentInactiveLocked(now))
 	tele = t.tele
 	chatID = t.cfg.TelegramChatID
 	t.mu.Unlock()
 
-	msg := fmt.Sprintf("➕ Добавлено времени: %s (%s). Итого: %s", formatDuration(d), source, total)
+	msg := fmt.Sprintf(
+		"➕ Добавлено времени: %s (%s). Активность: %s, неактивность: %s",
+		formatDuration(d), source, active, inactive,
+	)
 	log.Println(msg)
 	if tele != nil && chatID != 0 {
 		tele.SendLog(chatID, msg)
@@ -263,13 +310,22 @@ func (t *Tracker) endSession(reason string) SessionSummary {
 	now := time.Now()
 	if !t.ended {
 		if t.running {
-			t.accumulated += now.Sub(t.workStartedAt)
+			t.activeTotal += now.Sub(t.workStartedAt)
 			t.running = false
+		} else {
+			t.ensureInactiveStartedLocked(now)
 		}
+		t.closeInactiveLocked(now)
 		t.pausedManually = false
 		t.ended = true
 		t.lastStateAt = now
-		msg = fmt.Sprintf("🏁 Сессия завершена (%s). Рабочее время: %s", reason, formatDuration(t.currentTotalLocked(now)))
+
+		msg = fmt.Sprintf(
+			"🏁 Сессия завершена (%s). Активность: %s, неактивность: %s",
+			reason,
+			formatDuration(t.currentActiveLocked(now)),
+			formatDuration(t.currentInactiveLocked(now)),
+		)
 	}
 	summary = t.summaryLocked(now)
 	tele = t.tele
@@ -314,9 +370,13 @@ func (t *Tracker) HandleActivity(idle time.Duration) {
 
 	t.mu.Lock()
 	if t.ended || t.pausedManually || t.locked {
+		if !t.running {
+			t.ensureInactiveStartedLocked(now)
+		}
 		t.mu.Unlock()
 		return
 	}
+
 	needWarn := !t.warned && idle >= t.cfg.IdleWarnAfter.Duration
 	needStop := t.running && idle >= t.cfg.IdleWarnAfter.Duration+t.cfg.StopAfterWarn.Duration
 	if needWarn {
@@ -338,6 +398,7 @@ func (t *Tracker) SetLocked(locked bool) {
 		t.mu.Unlock()
 		return
 	}
+
 	already := t.locked == locked
 	t.locked = locked
 	if locked {
@@ -358,6 +419,7 @@ func (t *Tracker) SetLocked(locked bool) {
 
 	t.logf("🔓 Экран разблокирован")
 	if !paused {
+		// не форсим сразу активность, но возвращаемся в готовность к старту
 		t.startWork("экран разблокирован")
 	}
 }
@@ -381,7 +443,8 @@ func (t *Tracker) Summary() SessionSummary {
 func (t *Tracker) summaryLocked(now time.Time) SessionSummary {
 	return SessionSummary{
 		SessionStartedAt: t.sessionStartedAt,
-		TotalWorked:      t.currentTotalLocked(now),
+		TotalActive:      t.currentActiveLocked(now),
+		TotalInactive:    t.currentInactiveLocked(now),
 		TotalAdded:       t.manualAdded,
 		Running:          t.running,
 		PausedManually:   t.pausedManually,
@@ -391,10 +454,18 @@ func (t *Tracker) summaryLocked(now time.Time) SessionSummary {
 	}
 }
 
-func (t *Tracker) currentTotalLocked(now time.Time) time.Duration {
-	total := t.accumulated + t.manualAdded
+func (t *Tracker) currentActiveLocked(now time.Time) time.Duration {
+	total := t.activeTotal + t.manualAdded
 	if t.running {
 		total += now.Sub(t.workStartedAt)
+	}
+	return total
+}
+
+func (t *Tracker) currentInactiveLocked(now time.Time) time.Duration {
+	total := t.inactiveTotal
+	if !t.running && !t.inactiveStartedAt.IsZero() {
+		total += now.Sub(t.inactiveStartedAt)
 	}
 	return total
 }
@@ -421,10 +492,11 @@ func (n *TelegramNotifier) SendLog(chatID int64, text string) {
 
 func (n *TelegramNotifier) sessionText(s SessionSummary) string {
 	return fmt.Sprintf(
-		"📅 Сессия\nСтарт: %s\nСостояние: %s\nИтого: %s",
+		"📅 Сессия\nСтарт: %s\nСостояние: %s\nИтого активности: %s\nИтого неактивности: %s",
 		s.SessionStartedAt.Format(time.RFC3339),
 		stateText(s),
-		formatDuration(s.TotalWorked),
+		formatDuration(s.TotalActive),
+		formatDuration(s.TotalInactive),
 	)
 }
 
@@ -540,7 +612,12 @@ func (n *TelegramNotifier) handleMessage(tracker *Tracker, msg *tgbotapi.Message
 		s := tracker.Summary()
 		reply := tgbotapi.NewMessage(
 			msg.Chat.ID,
-			fmt.Sprintf("Состояние: %s\nИтого: %s", stateText(s), formatDuration(s.TotalWorked)),
+			fmt.Sprintf(
+				"Состояние: %s\nИтого активности: %s\nИтого неактивности: %s",
+				stateText(s),
+				formatDuration(s.TotalActive),
+				formatDuration(s.TotalInactive),
+			),
 		)
 		_, _ = n.bot.Send(reply)
 
@@ -622,6 +699,7 @@ func (a *App) Run(ctx context.Context) error {
 
 	go a.runIdlePolling(ctx)
 	go a.runLockPolling(ctx)
+	go a.runLockSignalWatcher(ctx)
 
 	a.tracker.startWork("старт программы")
 
@@ -717,6 +795,48 @@ func (a *App) runLockPolling(ctx context.Context) {
 			locked, err := isScreenLocked()
 			if err != nil {
 				a.tracker.logf("lock check error: %v", err)
+				continue
+			}
+			a.tracker.SetLocked(locked)
+		}
+	}
+}
+
+func (a *App) runLockSignalWatcher(ctx context.Context) {
+	conn, err := dbus.ConnectSessionBus()
+	if err != nil {
+		a.tracker.logf("lock signal watcher error: %v", err)
+		return
+	}
+	defer conn.Close()
+
+	rule := "type='signal',interface='org.gnome.ScreenSaver',member='ActiveChanged'"
+	call := conn.BusObject().Call("org.freedesktop.DBus.AddMatch", 0, rule)
+	if call.Err != nil {
+		a.tracker.logf("lock signal watcher add match error: %v", call.Err)
+		return
+	}
+
+	signals := make(chan *dbus.Signal, 10)
+	conn.Signal(signals)
+	defer conn.RemoveSignal(signals)
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case sig := <-signals:
+			if sig == nil {
+				continue
+			}
+			if sig.Name != "org.gnome.ScreenSaver.ActiveChanged" {
+				continue
+			}
+			if len(sig.Body) < 1 {
+				continue
+			}
+			locked, ok := sig.Body[0].(bool)
+			if !ok {
 				continue
 			}
 			a.tracker.SetLocked(locked)
