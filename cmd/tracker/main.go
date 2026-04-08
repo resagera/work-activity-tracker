@@ -62,24 +62,27 @@ func (d Duration) MarshalJSON() ([]byte, error) {
 }
 
 type Config struct {
-	TelegramToken  string   `json:"telegram_token"`
-	TelegramChatID int64    `json:"telegram_chat_id"`
-	HTTPPort       int      `json:"http_port"`
-	IdleWarnAfter  Duration `json:"idle_warn_after"`
-	StopAfterWarn  Duration `json:"stop_after_warn"`
-	PollInterval   Duration `json:"poll_interval"`
+	TelegramToken            string   `json:"telegram_token"`
+	TelegramChatID           int64    `json:"telegram_chat_id"`
+	HTTPPort                 int      `json:"http_port"`
+	IdleWarnAfter            Duration `json:"idle_warn_after"`
+	StopAfterWarn            Duration `json:"stop_after_warn"`
+	PollInterval             Duration `json:"poll_interval"`
+	ExcludedWindowSubstrings []string `json:"excluded_window_substrings"`
 }
 
 type SessionSummary struct {
-	SessionStartedAt time.Time     `json:"session_started_at"`
-	TotalActive      time.Duration `json:"total_active"`
-	TotalInactive    time.Duration `json:"total_inactive"`
-	TotalAdded       time.Duration `json:"total_added"`
-	Running          bool          `json:"running"`
-	PausedManually   bool          `json:"paused_manually"`
-	Locked           bool          `json:"locked"`
-	LastStateChange  time.Time     `json:"last_state_change"`
-	Ended            bool          `json:"ended"`
+	SessionStartedAt  time.Time     `json:"session_started_at"`
+	TotalActive       time.Duration `json:"total_active"`
+	TotalInactive     time.Duration `json:"total_inactive"`
+	TotalAdded        time.Duration `json:"total_added"`
+	Running           bool          `json:"running"`
+	PausedManually    bool          `json:"paused_manually"`
+	Locked            bool          `json:"locked"`
+	BlockedByWindow   bool          `json:"blocked_by_window"`
+	ActiveWindowTitle string        `json:"active_window_title"`
+	LastStateChange   time.Time     `json:"last_state_change"`
+	Ended             bool          `json:"ended"`
 }
 
 type Tracker struct {
@@ -90,21 +93,22 @@ type Tracker struct {
 	sessionStartedAt time.Time
 	lastStateAt      time.Time
 
-	// active accounting
 	running       bool
 	workStartedAt time.Time
 	activeTotal   time.Duration
 
-	// inactive accounting
 	inactiveStartedAt time.Time
 	inactiveTotal     time.Duration
 
 	manualAdded time.Duration
 
-	pausedManually bool
-	locked         bool
-	warned         bool
-	ended          bool
+	pausedManually  bool
+	locked          bool
+	warned          bool
+	ended           bool
+	blockedByWindow bool
+
+	activeWindowTitle string
 
 	tele *TelegramNotifier
 }
@@ -112,9 +116,10 @@ type Tracker struct {
 func NewTracker(cfg Config) *Tracker {
 	now := time.Now()
 	return &Tracker{
-		cfg:              cfg,
-		sessionStartedAt: now,
-		lastStateAt:      now,
+		cfg:               cfg,
+		sessionStartedAt:  now,
+		lastStateAt:       now,
+		inactiveStartedAt: time.Time{},
 	}
 }
 
@@ -161,7 +166,7 @@ func (t *Tracker) startWork(reason string) {
 	var chatID int64
 
 	t.mu.Lock()
-	if t.ended || t.running || t.pausedManually || t.locked {
+	if t.ended || t.running || t.pausedManually || t.locked || t.blockedByWindow {
 		t.mu.Unlock()
 		return
 	}
@@ -198,6 +203,7 @@ func (t *Tracker) stopWork(reason string) {
 
 	t.mu.Lock()
 	if !t.running {
+		t.ensureInactiveStartedLocked(time.Now())
 		t.mu.Unlock()
 		return
 	}
@@ -249,7 +255,7 @@ func (t *Tracker) setManualPause(paused bool) {
 		msg = "⏸ Ручная пауза включена"
 	} else {
 		t.pausedManually = false
-		if !t.locked && !t.running {
+		if !t.locked && !t.blockedByWindow && !t.running {
 			t.closeInactiveLocked(now)
 			t.running = true
 			t.workStartedAt = now
@@ -351,6 +357,7 @@ func (t *Tracker) HandleActivity(idle time.Duration) {
 		paused := t.pausedManually
 		locked := t.locked
 		ended := t.ended
+		blocked := t.blockedByWindow
 		wasWarned := t.warned
 		t.warned = false
 		t.lastStateAt = now
@@ -362,14 +369,14 @@ func (t *Tracker) HandleActivity(idle time.Duration) {
 		if wasWarned {
 			t.logf("✅ Активность возобновилась")
 		}
-		if !paused && !locked {
+		if !paused && !locked && !blocked {
 			t.startWork("обнаружена активность")
 		}
 		return
 	}
 
 	t.mu.Lock()
-	if t.ended || t.pausedManually || t.locked {
+	if t.ended || t.pausedManually || t.locked || t.blockedByWindow {
 		if !t.running {
 			t.ensureInactiveStartedLocked(now)
 		}
@@ -404,7 +411,6 @@ func (t *Tracker) SetLocked(locked bool) {
 	if locked {
 		t.warned = false
 	}
-	paused := t.pausedManually
 	t.mu.Unlock()
 
 	if already {
@@ -417,10 +423,80 @@ func (t *Tracker) SetLocked(locked bool) {
 		return
 	}
 
+	now := time.Now()
+	t.mu.Lock()
+	t.ensureInactiveStartedLocked(now)
+	t.lastStateAt = now
+	t.mu.Unlock()
+
 	t.logf("🔓 Экран разблокирован")
-	if !paused {
-		// не форсим сразу активность, но возвращаемся в готовность к старту
-		t.startWork("экран разблокирован")
+}
+
+func (t *Tracker) SetActiveWindowTitle(title string) {
+	var needStop bool
+	var needStart bool
+	var stopReason string
+	var startReason string
+	var logMsg string
+
+	t.mu.Lock()
+	if t.ended {
+		t.mu.Unlock()
+		return
+	}
+
+	prevBlocked := t.blockedByWindow
+	normalizedTitle := strings.TrimSpace(title)
+	t.activeWindowTitle = normalizedTitle
+
+	blocked := false
+	matched := ""
+
+	for _, sub := range t.cfg.ExcludedWindowSubstrings {
+		sub = strings.TrimSpace(sub)
+		if sub == "" {
+			continue
+		}
+		fmt.Println(strings.ToLower(normalizedTitle))
+		if strings.Contains(strings.ToLower(normalizedTitle), strings.ToLower(sub)) {
+			blocked = true
+			matched = sub
+			break
+		}
+	}
+
+	t.blockedByWindow = blocked
+
+	if blocked && !prevBlocked {
+		logMsg = fmt.Sprintf("🚫 Активность отключена из-за активного окна: %q (совпадение: %q)", normalizedTitle, matched)
+		if t.running {
+			needStop = true
+			stopReason = "активно исключенное окно"
+		} else {
+			now := time.Now()
+			t.ensureInactiveStartedLocked(now)
+			t.lastStateAt = now
+		}
+	}
+
+	if !blocked && prevBlocked {
+		logMsg = fmt.Sprintf("✅ Блокировка по окну снята: %q", normalizedTitle)
+		if !t.pausedManually && !t.locked && !t.running {
+			needStart = true
+			startReason = "сменилось активное окно"
+		}
+	}
+
+	t.mu.Unlock()
+
+	if logMsg != "" {
+		t.logf("%s", logMsg)
+	}
+	if needStop {
+		t.stopWork(stopReason)
+	}
+	if needStart {
+		t.startWork(startReason)
 	}
 }
 
@@ -442,15 +518,17 @@ func (t *Tracker) Summary() SessionSummary {
 
 func (t *Tracker) summaryLocked(now time.Time) SessionSummary {
 	return SessionSummary{
-		SessionStartedAt: t.sessionStartedAt,
-		TotalActive:      t.currentActiveLocked(now),
-		TotalInactive:    t.currentInactiveLocked(now),
-		TotalAdded:       t.manualAdded,
-		Running:          t.running,
-		PausedManually:   t.pausedManually,
-		Locked:           t.locked,
-		LastStateChange:  t.lastStateAt,
-		Ended:            t.ended,
+		SessionStartedAt:  t.sessionStartedAt,
+		TotalActive:       t.currentActiveLocked(now),
+		TotalInactive:     t.currentInactiveLocked(now),
+		TotalAdded:        t.manualAdded,
+		Running:           t.running,
+		PausedManually:    t.pausedManually,
+		Locked:            t.locked,
+		BlockedByWindow:   t.blockedByWindow,
+		ActiveWindowTitle: t.activeWindowTitle,
+		LastStateChange:   t.lastStateAt,
+		Ended:             t.ended,
 	}
 }
 
@@ -491,18 +569,25 @@ func (n *TelegramNotifier) SendLog(chatID int64, text string) {
 }
 
 func (n *TelegramNotifier) sessionText(s SessionSummary) string {
+	windowTitle := s.ActiveWindowTitle
+	if strings.TrimSpace(windowTitle) == "" {
+		windowTitle = "(не определено)"
+	}
+
 	return fmt.Sprintf(
-		"📅 Сессия\nСтарт: %s\nСостояние: %s\nИтого активности: %s\nИтого неактивности: %s",
+		"📅 Сессия\nСтарт: %s\nСостояние: %s\nИтого активности: %s\nИтого неактивности: %s\nАктивное окно: %s",
 		s.SessionStartedAt.Format(time.RFC3339),
 		stateText(s),
 		formatDuration(s.TotalActive),
 		formatDuration(s.TotalInactive),
+		windowTitle,
 	)
 }
 
 func (n *TelegramNotifier) controlsMarkup(s SessionSummary) tgbotapi.InlineKeyboardMarkup {
 	stateBtnText := "⏸ Пауза"
 	stateBtnData := "pause"
+
 	if s.Ended {
 		stateBtnText = "🚫 Завершено"
 		stateBtnData = "noop"
@@ -613,10 +698,11 @@ func (n *TelegramNotifier) handleMessage(tracker *Tracker, msg *tgbotapi.Message
 		reply := tgbotapi.NewMessage(
 			msg.Chat.ID,
 			fmt.Sprintf(
-				"Состояние: %s\nИтого активности: %s\nИтого неактивности: %s",
+				"Состояние: %s\nИтого активности: %s\nИтого неактивности: %s\nАктивное окно: %s",
 				stateText(s),
 				formatDuration(s.TotalActive),
 				formatDuration(s.TotalInactive),
+				emptyFallback(s.ActiveWindowTitle, "(не определено)"),
 			),
 		)
 		_, _ = n.bot.Send(reply)
@@ -700,6 +786,7 @@ func (a *App) Run(ctx context.Context) error {
 	go a.runIdlePolling(ctx)
 	go a.runLockPolling(ctx)
 	go a.runLockSignalWatcher(ctx)
+	go a.runActiveWindowPolling(ctx)
 
 	a.tracker.startWork("старт программы")
 
@@ -844,6 +931,31 @@ func (a *App) runLockSignalWatcher(ctx context.Context) {
 	}
 }
 
+func (a *App) runActiveWindowPolling(ctx context.Context) {
+	ticker := time.NewTicker(a.cfg.PollInterval.Duration)
+	defer ticker.Stop()
+
+	var lastTitle string
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			title, err := getActiveWindowTitle()
+			if err != nil {
+				a.tracker.logf("active window check error: %v", err)
+				continue
+			}
+
+			if title != lastTitle {
+				lastTitle = title
+				a.tracker.SetActiveWindowTitle(title)
+			}
+		}
+	}
+}
+
 func getIdleDuration() (time.Duration, error) {
 	conn, err := dbus.ConnectSessionBus()
 	if err != nil {
@@ -881,6 +993,15 @@ func isScreenLocked() (bool, error) {
 	}
 
 	return false, nil
+}
+
+func getActiveWindowTitle() (string, error) {
+	cmd := exec.Command("xdotool", "getwindowfocus", "getwindowname")
+	out, err := cmd.Output()
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(out)), nil
 }
 
 func sendDesktopNotification(title, body string) error {
@@ -937,6 +1058,8 @@ func stateText(s SessionSummary) string {
 		return "ручная пауза"
 	case s.Locked:
 		return "экран заблокирован"
+	case s.BlockedByWindow:
+		return "остановлено по активному окну"
 	case s.Running:
 		return "идет подсчет"
 	default:
@@ -944,11 +1067,22 @@ func stateText(s SessionSummary) string {
 	}
 }
 
+func emptyFallback(v, fallback string) string {
+	if strings.TrimSpace(v) == "" {
+		return fallback
+	}
+	return v
+}
+
 func defaultConfig() Config {
 	return Config{
 		IdleWarnAfter: Duration{Duration: defaultIdleWarnAfter},
 		StopAfterWarn: Duration{Duration: defaultStopAfterWarn},
 		PollInterval:  Duration{Duration: defaultPollInterval},
+		ExcludedWindowSubstrings: []string{
+			"Telegram",
+			"Youtube",
+		},
 	}
 }
 

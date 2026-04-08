@@ -29,7 +29,7 @@
 
 ```bash
 sudo apt update
-sudo apt install -y libnotify-bin
+sudo apt install -y libnotify-bin xdotool
 ```
 
 ### Go
