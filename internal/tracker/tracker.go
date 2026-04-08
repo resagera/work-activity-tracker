@@ -17,6 +17,7 @@ type Notifier interface {
 }
 
 type SessionSummary struct {
+	Started          bool          `json:"started"`
 	SessionStartedAt time.Time     `json:"session_started_at"`
 	TotalActive      time.Duration `json:"total_active"`
 	TotalInactive    time.Duration `json:"total_inactive"`
@@ -37,6 +38,7 @@ type Tracker struct {
 
 	cfg config.Config
 
+	started          bool
 	sessionStartedAt time.Time
 	lastStateAt      time.Time
 
@@ -64,10 +66,9 @@ type Tracker struct {
 func New(cfg config.Config, notifyFn func(title, body string) error) *Tracker {
 	now := time.Now()
 	return &Tracker{
-		cfg:              cfg,
-		sessionStartedAt: now,
-		lastStateAt:      now,
-		notifyFn:         notifyFn,
+		cfg:         cfg,
+		lastStateAt: now,
+		notifyFn:    notifyFn,
 	}
 }
 
@@ -98,7 +99,7 @@ func (t *Tracker) StartWork(reason string) {
 	var notifier Notifier
 
 	t.mu.Lock()
-	if t.ended || t.running || t.pausedManually || t.locked || t.blockedByWindow {
+	if !t.started || t.ended || t.running || t.pausedManually || t.locked || t.blockedByWindow {
 		t.mu.Unlock()
 		return
 	}
@@ -125,6 +126,52 @@ func (t *Tracker) StartWork(reason string) {
 		notifier.SendLog(msg)
 		notifier.RefreshControls()
 	}
+}
+
+func (t *Tracker) StartNewDay(reason string) SessionSummary {
+	var msg string
+	var notifier Notifier
+	var summary SessionSummary
+
+	t.mu.Lock()
+	now := time.Now()
+
+	t.started = true
+	t.sessionStartedAt = now
+	t.lastStateAt = now
+	t.running = false
+	t.workStartedAt = time.Time{}
+	t.activeTotal = 0
+	t.inactiveStartedAt = time.Time{}
+	t.inactiveTotal = 0
+	t.manualAdded = 0
+	t.pausedManually = false
+	t.warned = false
+	t.ended = false
+
+	if !t.locked && !t.blockedByWindow {
+		t.running = true
+		t.workStartedAt = now
+	} else {
+		t.ensureInactiveStartedLocked(now)
+	}
+
+	msg = fmt.Sprintf(
+		"📅 Начат новый день (%s). Состояние: %s",
+		reason,
+		StateText(t.summaryLocked(now)),
+	)
+	summary = t.summaryLocked(now)
+	notifier = t.notifier
+	t.mu.Unlock()
+
+	log.Println(msg)
+	if notifier != nil {
+		notifier.SendLog(msg)
+		notifier.RefreshControls()
+	}
+
+	return summary
 }
 
 func (t *Tracker) StopWork(reason string) {
@@ -167,7 +214,7 @@ func (t *Tracker) SetManualPause(paused bool) {
 	var notifier Notifier
 
 	t.mu.Lock()
-	if t.ended {
+	if !t.started || t.ended {
 		t.mu.Unlock()
 		return
 	}
@@ -212,6 +259,10 @@ func (t *Tracker) AddTime(d time.Duration, source string) {
 	var active, inactive string
 
 	t.mu.Lock()
+	if !t.started || t.ended {
+		t.mu.Unlock()
+		return
+	}
 	t.manualAdded += d
 	now := time.Now()
 	t.lastStateAt = now
@@ -238,7 +289,7 @@ func (t *Tracker) EndSession(reason string) SessionSummary {
 
 	t.mu.Lock()
 	now := time.Now()
-	if !t.ended {
+	if t.started && !t.ended {
 		if t.running {
 			t.activeTotal += now.Sub(t.workStartedAt)
 			t.running = false
@@ -277,6 +328,7 @@ func (t *Tracker) HandleActivity(idle time.Duration) {
 
 	if idle < time.Second {
 		t.mu.Lock()
+		started := t.started
 		paused := t.pausedManually
 		locked := t.locked
 		ended := t.ended
@@ -286,7 +338,7 @@ func (t *Tracker) HandleActivity(idle time.Duration) {
 		t.lastStateAt = now
 		t.mu.Unlock()
 
-		if ended {
+		if !started || ended {
 			return
 		}
 		if wasWarned {
@@ -299,6 +351,10 @@ func (t *Tracker) HandleActivity(idle time.Duration) {
 	}
 
 	t.mu.Lock()
+	if !t.started {
+		t.mu.Unlock()
+		return
+	}
 	if t.ended || t.pausedManually || t.locked || t.blockedByWindow {
 		if !t.running {
 			t.ensureInactiveStartedLocked(now)
@@ -324,19 +380,19 @@ func (t *Tracker) HandleActivity(idle time.Duration) {
 
 func (t *Tracker) SetLocked(locked bool) {
 	t.mu.Lock()
-	if t.ended {
-		t.mu.Unlock()
-		return
-	}
-
 	already := t.locked == locked
 	t.locked = locked
 	if locked {
 		t.warned = false
 	}
+	started := t.started
+	ended := t.ended
 	t.mu.Unlock()
 
 	if already {
+		return
+	}
+	if !started || ended {
 		return
 	}
 
@@ -363,19 +419,16 @@ func (t *Tracker) SetActiveWindowInfo(info platform.WindowInfo) {
 	var logMsg string
 
 	t.mu.Lock()
-	if t.ended {
-		t.mu.Unlock()
-		return
-	}
-
 	prevBlocked := t.blockedByWindow
 	prevID := t.windowInfo.WindowID
 	prevTitle := t.windowInfo.Title
 
 	t.windowInfo = info
 	t.blockedByWindow = info.BlockedByRule
+	started := t.started
+	ended := t.ended
 
-	if info.BlockedByRule && !prevBlocked {
+	if started && !ended && info.BlockedByRule && !prevBlocked {
 		logMsg = fmt.Sprintf(
 			"🚫 Активность отключена из-за окна: title=%q gtk_app_id=%q kde_desktop_file=%q wm_class=%q (поле=%s, совпадение=%q)",
 			info.Title,
@@ -395,7 +448,7 @@ func (t *Tracker) SetActiveWindowInfo(info platform.WindowInfo) {
 		}
 	}
 
-	if !info.BlockedByRule && prevBlocked {
+	if started && !ended && !info.BlockedByRule && prevBlocked {
 		logMsg = fmt.Sprintf("✅ Блокировка по окну снята: %q", info.Title)
 		if !t.pausedManually && !t.locked && !t.running {
 			needStart = true
@@ -452,6 +505,8 @@ func FormatDuration(d time.Duration) string {
 
 func StateText(s SessionSummary) string {
 	switch {
+	case !s.Started:
+		return "день не начат"
 	case s.Ended:
 		return "сессия завершена"
 	case s.PausedManually:
@@ -496,6 +551,9 @@ func (t *Tracker) closeInactiveLocked(now time.Time) {
 }
 
 func (t *Tracker) currentActiveLocked(now time.Time) time.Duration {
+	if !t.started {
+		return 0
+	}
 	total := t.activeTotal + t.manualAdded
 	if t.running {
 		total += now.Sub(t.workStartedAt)
@@ -504,6 +562,9 @@ func (t *Tracker) currentActiveLocked(now time.Time) time.Duration {
 }
 
 func (t *Tracker) currentInactiveLocked(now time.Time) time.Duration {
+	if !t.started {
+		return 0
+	}
 	total := t.inactiveTotal
 	if !t.running && !t.inactiveStartedAt.IsZero() {
 		total += now.Sub(t.inactiveStartedAt)
@@ -513,6 +574,7 @@ func (t *Tracker) currentInactiveLocked(now time.Time) time.Duration {
 
 func (t *Tracker) summaryLocked(now time.Time) SessionSummary {
 	return SessionSummary{
+		Started:          t.started,
 		SessionStartedAt: t.sessionStartedAt,
 		TotalActive:      t.currentActiveLocked(now),
 		TotalInactive:    t.currentInactiveLocked(now),

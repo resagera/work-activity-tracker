@@ -114,6 +114,10 @@ func (n *Notifier) sessionText(s tracker.SessionSummary) string {
 	gtkAppID := tracker.EmptyFallback(s.Window.GTKApplicationID, "-")
 	kdeDesktopFile := tracker.EmptyFallback(s.Window.KDEDesktopFile, "-")
 	wmClass := tracker.EmptyFallback(s.Window.WMClass, "-")
+	startedAt := "-"
+	if s.Started {
+		startedAt = s.SessionStartedAt.Format(time.RFC3339)
+	}
 
 	blockReason := ""
 	if s.Window.BlockedByRule {
@@ -126,7 +130,7 @@ func (n *Notifier) sessionText(s tracker.SessionSummary) string {
 
 	return fmt.Sprintf(
 		"📅 Сессия\nСтарт: %s\nСостояние: %s\nИтого активности: %s\nИтого неактивности: %s\nОкно: %s\nGTK_APPLICATION_ID: %s\nKDE_NET_WM_DESKTOP_FILE: %s\nWM_CLASS: %s%s",
-		s.SessionStartedAt.Format(time.RFC3339),
+		startedAt,
 		tracker.StateText(s),
 		tracker.FormatDuration(s.TotalActive),
 		tracker.FormatDuration(s.TotalInactive),
@@ -141,19 +145,22 @@ func (n *Notifier) sessionText(s tracker.SessionSummary) string {
 func (n *Notifier) controlsMarkup(s tracker.SessionSummary) tgbotapi.InlineKeyboardMarkup {
 	stateBtnText := "⏸ Пауза"
 	stateBtnData := "pause"
+	dayBtnText := "🏁 Завершить день"
+	dayBtnData := "end"
 
-	if s.Ended {
-		stateBtnText = "🚫 Завершено"
-		stateBtnData = "noop"
-	} else if s.PausedManually || !s.Running {
+	if !s.Started || s.Ended || s.PausedManually || !s.Running {
 		stateBtnText = "▶️ Старт"
 		stateBtnData = "start"
+	}
+	if !s.Started || s.Ended {
+		dayBtnText = "📅 Начать новый день"
+		dayBtnData = "newday"
 	}
 
 	buttons := [][]tgbotapi.InlineKeyboardButton{
 		{
 			tgbotapi.NewInlineKeyboardButtonData(stateBtnText, stateBtnData),
-			tgbotapi.NewInlineKeyboardButtonData("🏁 Завершить день", "end"),
+			tgbotapi.NewInlineKeyboardButtonData(dayBtnText, dayBtnData),
 		},
 		{
 			tgbotapi.NewInlineKeyboardButtonData("➕ 30м", "add:30m"),
@@ -203,13 +210,21 @@ func (n *Notifier) handleMessage(msg *tgbotapi.Message) {
 		n.tracker.SetManualPause(true)
 
 	case text == "/resume":
-		n.tracker.SetManualPause(false)
+		s := n.tracker.Summary()
+		if !s.Started || s.Ended {
+			n.tracker.StartNewDay("telegram command")
+		} else {
+			n.tracker.SetManualPause(false)
+		}
 
 	case text == "/end":
 		n.tracker.EndSession("telegram command")
 
+	case text == "/newday":
+		n.tracker.StartNewDay("telegram command")
+
 	default:
-		_, _ = n.bot.Send(tgbotapi.NewMessage(msg.Chat.ID, "Команды: /start, /status, /add 1h30m, /pause, /resume, /end"))
+		_, _ = n.bot.Send(tgbotapi.NewMessage(msg.Chat.ID, "Команды: /start, /status, /newday, /add 1h30m, /pause, /resume, /end"))
 	}
 }
 
@@ -221,9 +236,16 @@ func (n *Notifier) handleCallback(q *tgbotapi.CallbackQuery) {
 	case data == "pause":
 		n.tracker.SetManualPause(true)
 	case data == "start":
-		n.tracker.SetManualPause(false)
+		s := n.tracker.Summary()
+		if !s.Started || s.Ended {
+			n.tracker.StartNewDay("telegram button")
+		} else {
+			n.tracker.SetManualPause(false)
+		}
 	case data == "end":
 		n.tracker.EndSession("telegram button")
+	case data == "newday":
+		n.tracker.StartNewDay("telegram button")
 	case strings.HasPrefix(data, "add:"):
 		d, err := time.ParseDuration(strings.TrimPrefix(data, "add:"))
 		if err == nil {

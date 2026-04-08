@@ -53,6 +53,7 @@ type Config struct {
 	TelegramToken            string   `json:"telegram_token"`
 	TelegramChatID           int64    `json:"telegram_chat_id"`
 	HTTPPort                 int      `json:"http_port"`
+	AutoStartDay             bool     `json:"auto_start_day"`
 	IdleWarnAfter            Duration `json:"idle_warn_after"`
 	StopAfterWarn            Duration `json:"stop_after_warn"`
 	PollInterval             Duration `json:"poll_interval"`
@@ -62,6 +63,7 @@ type Config struct {
 
 func Default() Config {
 	return Config{
+		AutoStartDay:  true,
 		IdleWarnAfter: Duration{Duration: DefaultIdleWarnAfter},
 		StopAfterWarn: Duration{Duration: DefaultStopAfterWarn},
 		PollInterval:  Duration{Duration: DefaultPollInterval},

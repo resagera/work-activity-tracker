@@ -135,6 +135,7 @@ go build -o work-activity-tracker ./cmd/tracker-linux-x11
   "telegram_token": "",
   "telegram_chat_id": 0,
   "http_port": 8080,
+  "auto_start_day": true,
   "idle_warn_after": "2m",
   "stop_after_warn": "1m",
   "poll_interval": "5s",
@@ -152,6 +153,7 @@ go build -o work-activity-tracker ./cmd/tracker-linux-x11
 * `telegram_token` — токен Telegram-бота. Если пустой, бот не запускается.
 * `telegram_chat_id` — ID чата для сообщений и управления.
 * `http_port` — порт HTTP API. Если `0`, API не запускается.
+* `auto_start_day` — автоматически начинать новый день при старте программы. Если `false`, программа запускается в состоянии "день не начат".
 * `idle_warn_after` — время бездействия до предупреждения.
 * `stop_after_warn` — время после предупреждения до остановки учета.
 * `poll_interval` — интервал polling.
@@ -209,6 +211,7 @@ xprop -id $(xdotool getwindowfocus)
 * состояние;
 * итого активности;
 * итого неактивности;
+* вручную добавленное время;
 * заголовок активного окна;
 * `GTK_APPLICATION_ID`;
 * `KDE_NET_WM_DESKTOP_FILE`;
@@ -244,6 +247,14 @@ curl -X POST http://127.0.0.1:8080/pause
 curl -X POST http://127.0.0.1:8080/start
 ```
 
+Если день еще не начат или уже завершен, этот endpoint начинает новый день.
+
+### Начать новый день
+
+```bash
+curl -X POST http://127.0.0.1:8080/new-day
+```
+
 ### Завершить день
 
 ```bash
@@ -266,6 +277,7 @@ curl -X POST http://127.0.0.1:8080/end
 
 * `/start`
 * `/status`
+* `/newday`
 * `/add 1h30m`
 * `/pause`
 * `/resume`
@@ -274,6 +286,7 @@ curl -X POST http://127.0.0.1:8080/end
 ### Inline-кнопки
 
 * `Пауза` / `Старт`
+* `Начать новый день`
 * `+30м`
 * `+1ч`
 * `+2ч`

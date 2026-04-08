@@ -52,9 +52,15 @@ func (a *App) Run(ctx context.Context) error {
 	go a.runLockSignalWatcher(ctx)
 	go a.runActiveWindowPolling(ctx)
 
-	a.tracker.StartWork("старт программы")
+	if a.cfg.AutoStartDay {
+		a.tracker.StartNewDay("старт программы")
+	} else {
+		a.tracker.Logf("📅 Автостарт дня отключен. Ожидание команды на начало нового дня")
+	}
 
 	<-ctx.Done()
+	summary := a.tracker.EndSession("остановка программы")
+	printSessionSummary(summary)
 	return nil
 }
 
@@ -88,8 +94,17 @@ func (a *App) runHTTP(ctx context.Context) {
 	})
 
 	mux.HandleFunc("/start", func(w http.ResponseWriter, r *http.Request) {
+		s := a.tracker.Summary()
+		if !s.Started || s.Ended {
+			writeJSON(w, http.StatusOK, a.tracker.StartNewDay("http api"))
+			return
+		}
 		a.tracker.SetManualPause(false)
 		writeJSON(w, http.StatusOK, a.tracker.Summary())
+	})
+
+	mux.HandleFunc("/new-day", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, http.StatusOK, a.tracker.StartNewDay("http api"))
 	})
 
 	mux.HandleFunc("/end", func(w http.ResponseWriter, r *http.Request) {
@@ -198,6 +213,22 @@ func (a *App) runActiveWindowPolling(ctx context.Context) {
 func printConfig(cfg config.Config) {
 	b, _ := json.MarshalIndent(cfg, "", "  ")
 	fmt.Printf("CONFIG:\n%s\n", string(b))
+}
+
+func printSessionSummary(s tracker.SessionSummary) {
+	startedAt := "-"
+	if s.Started {
+		startedAt = s.SessionStartedAt.Format(time.RFC3339)
+	}
+
+	fmt.Printf(
+		"SESSION SUMMARY:\n  started_at: %s\n  state: %s\n  active: %s\n  inactive: %s\n  added: %s\n",
+		startedAt,
+		tracker.StateText(s),
+		tracker.FormatDuration(s.TotalActive),
+		tracker.FormatDuration(s.TotalInactive),
+		tracker.FormatDuration(s.TotalAdded),
+	)
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {
