@@ -21,6 +21,8 @@ import (
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"github.com/godbus/dbus/v5"
+
+	"work-activity-tracker/pkg/version"
 )
 
 const (
@@ -70,6 +72,7 @@ type Config struct {
 	StopAfterWarn            Duration `json:"stop_after_warn"`
 	PollInterval             Duration `json:"poll_interval"`
 	ExcludedWindowSubstrings []string `json:"excluded_window_substrings"`
+	ShowVersion              bool     `json:"show_version"`
 }
 
 type WindowInfo struct {
@@ -1339,6 +1342,7 @@ func overrideFromFlags(cfg *Config, args []string) error {
 		idleWarn       = fs.Duration("idle-warn-after", 0, "time without activity before warning")
 		stopAfter      = fs.Duration("stop-after-warn", 0, "time after warning before stop")
 		pollInterval   = fs.Duration("poll-interval", 0, "idle/lock polling interval")
+		showVersion    = fs.Bool("version", false, "show version")
 	)
 
 	if err := fs.Parse(args[1:]); err != nil {
@@ -1371,11 +1375,17 @@ func overrideFromFlags(cfg *Config, args []string) error {
 	if *pollInterval > 0 {
 		cfg.PollInterval = Duration{Duration: *pollInterval}
 	}
+	if *showVersion {
+		cfg.ShowVersion = true
+	}
 
 	return nil
 }
 
 func main() {
+	version.MajorVersion = "1"
+	version.MinorVersion = "1"
+
 	cfg, err := loadConfigFromArgs(os.Args[1:])
 	if err != nil {
 		log.Fatalf("load config: %v", err)
@@ -1383,6 +1393,11 @@ func main() {
 
 	if err := overrideFromFlags(&cfg, os.Args); err != nil {
 		log.Fatalf("parse flags: %v", err)
+	}
+
+	fmt.Println("Version: " + version.Get().SemVer())
+	if cfg.ShowVersion {
+		return
 	}
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
