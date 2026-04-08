@@ -1,6 +1,16 @@
 # Work Activity Tracker
 
-Утилита на Go для учета рабочего времени в Ubuntu/Linux.
+Утилита на Go для учета рабочего времени в Linux.
+
+Текущая реализация собрана по архитектуре с разделением на:
+
+- `cmd/...` для entrypoint под конкретную ОС/окружение;
+- `internal/app` для orchestration;
+- `internal/tracker` для бизнес-логики;
+- `internal/platform` для платформенных интерфейсов;
+- `internal/platform/linuxx11` для Linux X11 / GNOME-специфики.
+
+Сейчас реализован вариант только для `Linux X11`.
 
 ## Что умеет
 
@@ -46,13 +56,13 @@
 ```bash
 sudo apt update
 sudo apt install -y libnotify-bin xdotool x11-utils
-````
+```
 
 `x11-utils` нужен для `xprop`.
 
 ### Go
 
-Рекомендуется Go 1.22+.
+Рекомендуется Go 1.25+.
 
 ---
 
@@ -63,11 +73,11 @@ sudo apt install -y libnotify-bin xdotool x11-utils
 ```go
 module work-activity-tracker
 
-go 1.22
+go 1.25
 
 require (
     github.com/go-telegram-bot-api/telegram-bot-api/v5 v5.5.1
-    github.com/godbus/dbus/v5 v5.1.0
+    github.com/godbus/dbus/v5 v5.2.2
 )
 ```
 
@@ -87,7 +97,7 @@ go mod tidy
 ## Сборка
 
 ```bash
-go build -o work-activity-tracker
+go build -o work-activity-tracker ./cmd/tracker-linux-x11
 ```
 
 ---
@@ -307,5 +317,3 @@ xprop -id $(xdotool getwindowfocus)
 * web UI;
 * экспорт статистики по дням;
 * fallback-механизмы для Wayland.
-
-
