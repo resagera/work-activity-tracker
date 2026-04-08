@@ -6,11 +6,26 @@
 
 - `cmd/...` для entrypoint под конкретную ОС/окружение;
 - `internal/app` для orchestration;
+- `internal/bootstrap` для общего startup-кода entrypoint'ов;
 - `internal/tracker` для бизнес-логики;
 - `internal/platform` для платформенных интерфейсов;
 - `internal/platform/linuxx11` для Linux X11 / GNOME-специфики.
 
 Сейчас реализован вариант только для `Linux X11`.
+
+Подготовлены каркасы entrypoint'ов:
+
+- `cmd/tracker-linux-x11`
+- `cmd/tracker-linux-wayland`
+- `cmd/tracker-macos`
+- `cmd/tracker-windows`
+
+И зарезервированы платформенные пакеты:
+
+- `internal/platform/linuxx11`
+- `internal/platform/linuxwayland`
+- `internal/platform/macos`
+- `internal/platform/windows`
 
 ## Что умеет
 
