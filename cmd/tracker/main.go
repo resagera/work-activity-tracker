@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -71,18 +72,32 @@ type Config struct {
 	ExcludedWindowSubstrings []string `json:"excluded_window_substrings"`
 }
 
+type WindowInfo struct {
+	WindowID          string `json:"window_id"`
+	Title             string `json:"title"`
+	GTKApplicationID  string `json:"gtk_application_id"`
+	KDEDesktopFile    string `json:"kde_net_wm_desktop_file"`
+	WMClass           string `json:"wm_class"`
+	MatchedField      string `json:"matched_field"`
+	MatchedSubstring  string `json:"matched_substring"`
+	BlockedByRule     bool   `json:"blocked_by_rule"`
+	LastRawXpropBlock string `json:"-"`
+}
+
 type SessionSummary struct {
-	SessionStartedAt  time.Time     `json:"session_started_at"`
-	TotalActive       time.Duration `json:"total_active"`
-	TotalInactive     time.Duration `json:"total_inactive"`
-	TotalAdded        time.Duration `json:"total_added"`
-	Running           bool          `json:"running"`
-	PausedManually    bool          `json:"paused_manually"`
-	Locked            bool          `json:"locked"`
-	BlockedByWindow   bool          `json:"blocked_by_window"`
-	ActiveWindowTitle string        `json:"active_window_title"`
-	LastStateChange   time.Time     `json:"last_state_change"`
-	Ended             bool          `json:"ended"`
+	SessionStartedAt time.Time     `json:"session_started_at"`
+	TotalActive      time.Duration `json:"total_active"`
+	TotalInactive    time.Duration `json:"total_inactive"`
+	TotalAdded       time.Duration `json:"total_added"`
+
+	Running         bool      `json:"running"`
+	PausedManually  bool      `json:"paused_manually"`
+	Locked          bool      `json:"locked"`
+	BlockedByWindow bool      `json:"blocked_by_window"`
+	LastStateChange time.Time `json:"last_state_change"`
+	Ended           bool      `json:"ended"`
+
+	Window WindowInfo `json:"window"`
 }
 
 type Tracker struct {
@@ -102,13 +117,13 @@ type Tracker struct {
 
 	manualAdded time.Duration
 
-	pausedManually  bool
-	locked          bool
-	warned          bool
-	ended           bool
-	blockedByWindow bool
+	pausedManually bool
+	locked         bool
+	warned         bool
+	ended          bool
 
-	activeWindowTitle string
+	blockedByWindow bool
+	windowInfo      WindowInfo
 
 	tele *TelegramNotifier
 }
@@ -116,10 +131,9 @@ type Tracker struct {
 func NewTracker(cfg Config) *Tracker {
 	now := time.Now()
 	return &Tracker{
-		cfg:               cfg,
-		sessionStartedAt:  now,
-		lastStateAt:       now,
-		inactiveStartedAt: time.Time{},
+		cfg:              cfg,
+		sessionStartedAt: now,
+		lastStateAt:      now,
 	}
 }
 
@@ -158,6 +172,46 @@ func (t *Tracker) closeInactiveLocked(now time.Time) {
 	}
 	t.inactiveTotal += now.Sub(t.inactiveStartedAt)
 	t.inactiveStartedAt = time.Time{}
+}
+
+func (t *Tracker) currentActiveLocked(now time.Time) time.Duration {
+	total := t.activeTotal + t.manualAdded
+	if t.running {
+		total += now.Sub(t.workStartedAt)
+	}
+	return total
+}
+
+func (t *Tracker) currentInactiveLocked(now time.Time) time.Duration {
+	total := t.inactiveTotal
+	if !t.running && !t.inactiveStartedAt.IsZero() {
+		total += now.Sub(t.inactiveStartedAt)
+	}
+	return total
+}
+
+func (t *Tracker) summaryLocked(now time.Time) SessionSummary {
+	return SessionSummary{
+		SessionStartedAt: t.sessionStartedAt,
+		TotalActive:      t.currentActiveLocked(now),
+		TotalInactive:    t.currentInactiveLocked(now),
+		TotalAdded:       t.manualAdded,
+
+		Running:         t.running,
+		PausedManually:  t.pausedManually,
+		Locked:          t.locked,
+		BlockedByWindow: t.blockedByWindow,
+		LastStateChange: t.lastStateAt,
+		Ended:           t.ended,
+
+		Window: t.windowInfo,
+	}
+}
+
+func (t *Tracker) Summary() SessionSummary {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.summaryLocked(time.Now())
 }
 
 func (t *Tracker) startWork(reason string) {
@@ -432,7 +486,7 @@ func (t *Tracker) SetLocked(locked bool) {
 	t.logf("🔓 Экран разблокирован")
 }
 
-func (t *Tracker) SetActiveWindowTitle(title string) {
+func (t *Tracker) SetActiveWindowInfo(info WindowInfo) {
 	var needStop bool
 	var needStart bool
 	var stopReason string
@@ -446,29 +500,22 @@ func (t *Tracker) SetActiveWindowTitle(title string) {
 	}
 
 	prevBlocked := t.blockedByWindow
-	normalizedTitle := strings.TrimSpace(title)
-	t.activeWindowTitle = normalizedTitle
+	prevID := t.windowInfo.WindowID
+	prevTitle := t.windowInfo.Title
 
-	blocked := false
-	matched := ""
+	t.windowInfo = info
+	t.blockedByWindow = info.BlockedByRule
 
-	for _, sub := range t.cfg.ExcludedWindowSubstrings {
-		sub = strings.TrimSpace(sub)
-		if sub == "" {
-			continue
-		}
-		fmt.Println(strings.ToLower(normalizedTitle))
-		if strings.Contains(strings.ToLower(normalizedTitle), strings.ToLower(sub)) {
-			blocked = true
-			matched = sub
-			break
-		}
-	}
-
-	t.blockedByWindow = blocked
-
-	if blocked && !prevBlocked {
-		logMsg = fmt.Sprintf("🚫 Активность отключена из-за активного окна: %q (совпадение: %q)", normalizedTitle, matched)
+	if info.BlockedByRule && !prevBlocked {
+		logMsg = fmt.Sprintf(
+			"🚫 Активность отключена из-за окна: title=%q gtk_app_id=%q kde_desktop_file=%q wm_class=%q (поле=%s, совпадение=%q)",
+			info.Title,
+			info.GTKApplicationID,
+			info.KDEDesktopFile,
+			info.WMClass,
+			info.MatchedField,
+			info.MatchedSubstring,
+		)
 		if t.running {
 			needStop = true
 			stopReason = "активно исключенное окно"
@@ -479,12 +526,17 @@ func (t *Tracker) SetActiveWindowTitle(title string) {
 		}
 	}
 
-	if !blocked && prevBlocked {
-		logMsg = fmt.Sprintf("✅ Блокировка по окну снята: %q", normalizedTitle)
+	if !info.BlockedByRule && prevBlocked {
+		logMsg = fmt.Sprintf("✅ Блокировка по окну снята: %q", info.Title)
 		if !t.pausedManually && !t.locked && !t.running {
 			needStart = true
 			startReason = "сменилось активное окно"
 		}
+	}
+
+	if !info.BlockedByRule && !prevBlocked && (info.WindowID != prevID || info.Title != prevTitle) {
+		now := time.Now()
+		t.lastStateAt = now
 	}
 
 	t.mu.Unlock()
@@ -510,44 +562,6 @@ func (t *Tracker) notifySoonPause(idle time.Duration) {
 	t.logf("⚠️ %s", text)
 }
 
-func (t *Tracker) Summary() SessionSummary {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	return t.summaryLocked(time.Now())
-}
-
-func (t *Tracker) summaryLocked(now time.Time) SessionSummary {
-	return SessionSummary{
-		SessionStartedAt:  t.sessionStartedAt,
-		TotalActive:       t.currentActiveLocked(now),
-		TotalInactive:     t.currentInactiveLocked(now),
-		TotalAdded:        t.manualAdded,
-		Running:           t.running,
-		PausedManually:    t.pausedManually,
-		Locked:            t.locked,
-		BlockedByWindow:   t.blockedByWindow,
-		ActiveWindowTitle: t.activeWindowTitle,
-		LastStateChange:   t.lastStateAt,
-		Ended:             t.ended,
-	}
-}
-
-func (t *Tracker) currentActiveLocked(now time.Time) time.Duration {
-	total := t.activeTotal + t.manualAdded
-	if t.running {
-		total += now.Sub(t.workStartedAt)
-	}
-	return total
-}
-
-func (t *Tracker) currentInactiveLocked(now time.Time) time.Duration {
-	total := t.inactiveTotal
-	if !t.running && !t.inactiveStartedAt.IsZero() {
-		total += now.Sub(t.inactiveStartedAt)
-	}
-	return total
-}
-
 type TelegramNotifier struct {
 	bot *tgbotapi.BotAPI
 
@@ -569,18 +583,31 @@ func (n *TelegramNotifier) SendLog(chatID int64, text string) {
 }
 
 func (n *TelegramNotifier) sessionText(s SessionSummary) string {
-	windowTitle := s.ActiveWindowTitle
-	if strings.TrimSpace(windowTitle) == "" {
-		windowTitle = "(не определено)"
+	title := emptyFallback(s.Window.Title, "(не определено)")
+	gtkAppID := emptyFallback(s.Window.GTKApplicationID, "-")
+	kdeDesktopFile := emptyFallback(s.Window.KDEDesktopFile, "-")
+	wmClass := emptyFallback(s.Window.WMClass, "-")
+
+	blockReason := ""
+	if s.Window.BlockedByRule {
+		blockReason = fmt.Sprintf(
+			"\nСовпадение: поле=%s, подстрока=%s",
+			emptyFallback(s.Window.MatchedField, "-"),
+			emptyFallback(s.Window.MatchedSubstring, "-"),
+		)
 	}
 
 	return fmt.Sprintf(
-		"📅 Сессия\nСтарт: %s\nСостояние: %s\nИтого активности: %s\nИтого неактивности: %s\nАктивное окно: %s",
+		"📅 Сессия\nСтарт: %s\nСостояние: %s\nИтого активности: %s\nИтого неактивности: %s\nОкно: %s\nGTK_APPLICATION_ID: %s\nKDE_NET_WM_DESKTOP_FILE: %s\nWM_CLASS: %s%s",
 		s.SessionStartedAt.Format(time.RFC3339),
 		stateText(s),
 		formatDuration(s.TotalActive),
 		formatDuration(s.TotalInactive),
-		windowTitle,
+		title,
+		gtkAppID,
+		kdeDesktopFile,
+		wmClass,
+		blockReason,
 	)
 }
 
@@ -698,11 +725,14 @@ func (n *TelegramNotifier) handleMessage(tracker *Tracker, msg *tgbotapi.Message
 		reply := tgbotapi.NewMessage(
 			msg.Chat.ID,
 			fmt.Sprintf(
-				"Состояние: %s\nИтого активности: %s\nИтого неактивности: %s\nАктивное окно: %s",
+				"Состояние: %s\nИтого активности: %s\nИтого неактивности: %s\nОкно: %s\nGTK_APPLICATION_ID: %s\nKDE_NET_WM_DESKTOP_FILE: %s\nWM_CLASS: %s",
 				stateText(s),
 				formatDuration(s.TotalActive),
 				formatDuration(s.TotalInactive),
-				emptyFallback(s.ActiveWindowTitle, "(не определено)"),
+				emptyFallback(s.Window.Title, "(не определено)"),
+				emptyFallback(s.Window.GTKApplicationID, "-"),
+				emptyFallback(s.Window.KDEDesktopFile, "-"),
+				emptyFallback(s.Window.WMClass, "-"),
 			),
 		)
 		_, _ = n.bot.Send(reply)
@@ -935,22 +965,33 @@ func (a *App) runActiveWindowPolling(ctx context.Context) {
 	ticker := time.NewTicker(a.cfg.PollInterval.Duration)
 	defer ticker.Stop()
 
-	var lastTitle string
+	var lastFingerprint string
 
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			title, err := getActiveWindowTitle()
+			info, err := getActiveWindowInfo(a.cfg.ExcludedWindowSubstrings)
 			if err != nil {
 				a.tracker.logf("active window check error: %v", err)
 				continue
 			}
 
-			if title != lastTitle {
-				lastTitle = title
-				a.tracker.SetActiveWindowTitle(title)
+			fingerprint := strings.Join([]string{
+				info.WindowID,
+				info.Title,
+				info.GTKApplicationID,
+				info.KDEDesktopFile,
+				info.WMClass,
+				strconv.FormatBool(info.BlockedByRule),
+				info.MatchedField,
+				info.MatchedSubstring,
+			}, "\x00")
+
+			if fingerprint != lastFingerprint {
+				lastFingerprint = fingerprint
+				a.tracker.SetActiveWindowInfo(info)
 			}
 		}
 	}
@@ -995,13 +1036,139 @@ func isScreenLocked() (bool, error) {
 	return false, nil
 }
 
-func getActiveWindowTitle() (string, error) {
+func getActiveWindowInfo(excluded []string) (WindowInfo, error) {
+	windowID, err := getFocusedWindowID()
+	if err != nil {
+		return WindowInfo{}, err
+	}
+
+	title, err := getFocusedWindowTitle()
+	if err != nil {
+		return WindowInfo{}, err
+	}
+
+	xpropOut, err := getWindowXProp(windowID)
+	if err != nil {
+		return WindowInfo{}, err
+	}
+
+	info := WindowInfo{
+		WindowID:          windowID,
+		Title:             title,
+		GTKApplicationID:  parseXPropValue(xpropOut, "_GTK_APPLICATION_ID"),
+		KDEDesktopFile:    parseXPropValue(xpropOut, "_KDE_NET_WM_DESKTOP_FILE"),
+		WMClass:           parseWMClass(xpropOut),
+		LastRawXpropBlock: xpropOut,
+	}
+
+	blocked, field, substr := matchWindowInfo(info, excluded)
+	info.BlockedByRule = blocked
+	info.MatchedField = field
+	info.MatchedSubstring = substr
+
+	return info, nil
+}
+
+func getFocusedWindowID() (string, error) {
+	cmd := exec.Command("xdotool", "getwindowfocus")
+	out, err := cmd.Output()
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(out)), nil
+}
+
+func getFocusedWindowTitle() (string, error) {
 	cmd := exec.Command("xdotool", "getwindowfocus", "getwindowname")
 	out, err := cmd.Output()
 	if err != nil {
 		return "", err
 	}
 	return strings.TrimSpace(string(out)), nil
+}
+
+func getWindowXProp(windowID string) (string, error) {
+	cmd := exec.Command("xprop", "-id", windowID)
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	if err := cmd.Run(); err != nil {
+		errText := strings.TrimSpace(stderr.String())
+		if errText != "" {
+			return "", fmt.Errorf("%w: %s", err, errText)
+		}
+		return "", err
+	}
+
+	return stdout.String(), nil
+}
+
+func parseXPropValue(xpropOutput, key string) string {
+	lines := strings.Split(xpropOutput, "\n")
+	prefix := key + "("
+	altPrefix := key + " ="
+
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+
+		if strings.HasPrefix(line, prefix) || strings.HasPrefix(line, altPrefix) || strings.HasPrefix(line, key+" ") {
+			if idx := strings.Index(line, "="); idx >= 0 {
+				v := strings.TrimSpace(line[idx+1:])
+				return trimQuoted(v)
+			}
+		}
+	}
+
+	return ""
+}
+
+func parseWMClass(xpropOutput string) string {
+	lines := strings.Split(xpropOutput, "\n")
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "WM_CLASS") {
+			if idx := strings.Index(line, "="); idx >= 0 {
+				v := strings.TrimSpace(line[idx+1:])
+				return trimQuoted(v)
+			}
+		}
+	}
+	return ""
+}
+
+func trimQuoted(s string) string {
+	s = strings.TrimSpace(s)
+	s = strings.Trim(s, "\"")
+	return s
+}
+
+func matchWindowInfo(info WindowInfo, excluded []string) (bool, string, string) {
+	fields := []struct {
+		name  string
+		value string
+	}{
+		{name: "title", value: info.Title},
+		{name: "_GTK_APPLICATION_ID", value: info.GTKApplicationID},
+		{name: "_KDE_NET_WM_DESKTOP_FILE", value: info.KDEDesktopFile},
+		{name: "WM_CLASS", value: info.WMClass},
+	}
+
+	for _, sub := range excluded {
+		sub = strings.TrimSpace(sub)
+		if sub == "" {
+			continue
+		}
+
+		for _, field := range fields {
+			if strings.Contains(strings.ToLower(field.value), strings.ToLower(sub)) {
+				return true, field.name, sub
+			}
+		}
+	}
+
+	return false, "", ""
 }
 
 func sendDesktopNotification(title, body string) error {
@@ -1150,10 +1317,8 @@ func loadConfigFromArgs(args []string) (Config, error) {
 			}
 			configPath = args[i+1]
 			i++
-
 		case strings.HasPrefix(arg, "-config="):
 			configPath = strings.TrimPrefix(arg, "-config=")
-
 		case strings.HasPrefix(arg, "--config="):
 			configPath = strings.TrimPrefix(arg, "--config=")
 		}
