@@ -38,4 +38,7 @@ media/
 music/
 temp/
 
+.codex
+
 config.json
+tray-config.json

@@ -16,6 +16,7 @@
 Подготовлены каркасы entrypoint'ов:
 
 - `cmd/tracker-linux-x11`
+- `cmd/tracker-tray-linux-x11`
 - `cmd/tracker-linux-wayland`
 - `cmd/tracker-macos`
 - `cmd/tracker-windows`
@@ -45,6 +46,7 @@
 - сохраняет историю сессий в JSON;
 - умеет продолжать предыдущий день по истории;
 - умеет опционально писать весь консольный вывод в лог-файл;
+- умеет отдельное tray-приложение через HTTP API;
 - умеет отслеживать активное окно;
 - умеет останавливать активность по совпадению подстрок из конфига в:
   - заголовке окна,
@@ -119,6 +121,12 @@ go mod tidy
 go build -o work-activity-tracker ./cmd/tracker-linux-x11
 ```
 
+Tray-приложение:
+
+```bash
+go build -o ./bin/work-activity-tracker-tray ./cmd/tracker-tray-linux-x11
+```
+
 ---
 
 ## Конфиг
@@ -166,6 +174,24 @@ go build -o work-activity-tracker ./cmd/tracker-linux-x11
 * `stop_after_warn` — время после предупреждения до остановки учета.
 * `poll_interval` — интервал polling.
 * `excluded_window_substrings` — список подстрок. Если хотя бы одна найдена в одном из полей окна, активность сразу останавливается.
+
+Для tray-приложения используется отдельный конфиг `tray-config.json`.
+
+Пример:
+
+```json
+{
+  "api_base_url": "http://127.0.0.1:8080",
+  "poll_interval": "5s",
+  "request_timeout": "3s"
+}
+```
+
+Поля:
+
+* `api_base_url` — базовый URL HTTP API основного трекера.
+* `poll_interval` — как часто tray обновляет статус.
+* `request_timeout` — timeout HTTP-запросов tray-приложения.
 
 ---
 
@@ -283,6 +309,8 @@ curl -X POST http://127.0.0.1:8080/end
 curl http://127.0.0.1:8080/history
 ```
 
+История хранится в JSON-файле, указанном в `history_file`.
+
 ---
 
 ## Telegram-бот
@@ -320,6 +348,26 @@ curl http://127.0.0.1:8080/history
 
 ---
 
+## Tray-приложение
+
+Tray-приложение запускается отдельно и подключается к HTTP API основного трекера.
+
+По клику на иконку открывается меню с:
+
+* активным временем;
+* неактивным временем;
+* текущим состоянием;
+* действиями, повторяющими API: `refresh`, `start`, `pause`, `new day`, `continue day`, `add 30m`, `add 1h`, `add 2h`, `end`.
+
+Иконка меняется по состоянию:
+
+* зеленая — идет подсчет;
+* серая — день не начат или завершен;
+* желтая — пауза / ожидание / блокировка;
+* красная — ошибка связи с API.
+
+---
+
 ## Пример запуска
 
 ```bash
@@ -330,6 +378,13 @@ curl http://127.0.0.1:8080/history
 
 ```bash
 ./work-activity-tracker --config=config.json
+```
+
+Основной трекер + tray:
+
+```bash
+./work-activity-tracker --config=config.json
+./work-activity-tracker-tray --config=tray-config.json
 ```
 
 ---
