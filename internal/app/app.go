@@ -115,6 +115,23 @@ func (a *App) runHTTP(ctx context.Context) {
 		writeJSON(w, http.StatusOK, a.tracker.Summary())
 	})
 
+	mux.HandleFunc("/subtract", func(w http.ResponseWriter, r *http.Request) {
+		minutesStr := r.URL.Query().Get("minutes")
+		if minutesStr == "" {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "minutes is required"})
+			return
+		}
+
+		minutes, err := strconv.Atoi(minutesStr)
+		if err != nil || minutes <= 0 {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "minutes must be positive integer"})
+			return
+		}
+
+		a.MoveActiveToInactive(time.Duration(minutes)*time.Minute, "http api")
+		writeJSON(w, http.StatusOK, a.tracker.Summary())
+	})
+
 	mux.HandleFunc("/pause", func(w http.ResponseWriter, r *http.Request) {
 		a.SetManualPause(true)
 		writeJSON(w, http.StatusOK, a.tracker.Summary())
@@ -275,6 +292,10 @@ func (a *App) Summary() tracker.SessionSummary {
 
 func (a *App) AddTime(d time.Duration, source string) {
 	a.tracker.AddTime(d, source)
+}
+
+func (a *App) MoveActiveToInactive(d time.Duration, source string) {
+	a.tracker.MoveActiveToInactive(d, source)
 }
 
 func (a *App) SetManualPause(paused bool) {

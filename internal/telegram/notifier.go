@@ -15,6 +15,7 @@ import (
 type appController interface {
 	Summary() tracker.SessionSummary
 	AddTime(d time.Duration, source string)
+	MoveActiveToInactive(d time.Duration, source string)
 	SetManualPause(paused bool)
 	StartNewDay(reason string) tracker.SessionSummary
 	ContinueDay(reason string) tracker.SessionSummary
@@ -182,6 +183,11 @@ func (n *Notifier) controlsMarkup(s tracker.SessionSummary) tgbotapi.InlineKeybo
 		tgbotapi.NewInlineKeyboardButtonData("➕ 1ч", "add:1h"),
 		tgbotapi.NewInlineKeyboardButtonData("➕ 2ч", "add:2h"),
 	})
+	buttons = append(buttons, []tgbotapi.InlineKeyboardButton{
+		tgbotapi.NewInlineKeyboardButtonData("➖ 10м", "sub:10m"),
+		tgbotapi.NewInlineKeyboardButtonData("➖ 20м", "sub:20m"),
+		tgbotapi.NewInlineKeyboardButtonData("➖ 30м", "sub:30m"),
+	})
 
 	return tgbotapi.NewInlineKeyboardMarkup(buttons...)
 }
@@ -220,6 +226,16 @@ func (n *Notifier) handleMessage(msg *tgbotapi.Message) {
 		n.app.AddTime(d, "telegram command")
 		n.RefreshControls()
 
+	case strings.HasPrefix(text, "/sub "):
+		v := strings.TrimSpace(strings.TrimPrefix(text, "/sub "))
+		d, err := time.ParseDuration(v)
+		if err != nil {
+			_, _ = n.bot.Send(tgbotapi.NewMessage(msg.Chat.ID, "Используй формат: /sub 30m"))
+			return
+		}
+		n.app.MoveActiveToInactive(d, "telegram command")
+		n.RefreshControls()
+
 	case text == "/pause":
 		n.app.SetManualPause(true)
 
@@ -241,7 +257,7 @@ func (n *Notifier) handleMessage(msg *tgbotapi.Message) {
 		n.app.ContinueDay("telegram command")
 
 	default:
-		_, _ = n.bot.Send(tgbotapi.NewMessage(msg.Chat.ID, "Команды: /start, /status, /newday, /continue, /add 1h30m, /pause, /resume, /end"))
+		_, _ = n.bot.Send(tgbotapi.NewMessage(msg.Chat.ID, "Команды: /start, /status, /newday, /continue, /add 1h30m, /sub 30m, /pause, /resume, /end"))
 	}
 }
 
@@ -269,6 +285,11 @@ func (n *Notifier) handleCallback(q *tgbotapi.CallbackQuery) {
 		d, err := time.ParseDuration(strings.TrimPrefix(data, "add:"))
 		if err == nil {
 			n.app.AddTime(d, "telegram button")
+		}
+	case strings.HasPrefix(data, "sub:"):
+		d, err := time.ParseDuration(strings.TrimPrefix(data, "sub:"))
+		if err == nil {
+			n.app.MoveActiveToInactive(d, "telegram button")
 		}
 	}
 

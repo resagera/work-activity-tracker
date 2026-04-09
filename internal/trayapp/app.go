@@ -47,6 +47,9 @@ type App struct {
 	add30Item       *systray.MenuItem
 	add1hItem       *systray.MenuItem
 	add2hItem       *systray.MenuItem
+	sub10Item       *systray.MenuItem
+	sub20Item       *systray.MenuItem
+	sub30Item       *systray.MenuItem
 	endItem         *systray.MenuItem
 	quitItem        *systray.MenuItem
 
@@ -91,6 +94,9 @@ func (a *App) onReady() {
 	a.add30Item = systray.AddMenuItem("Добавить 30м", "Добавить 30 минут")
 	a.add1hItem = systray.AddMenuItem("Добавить 1ч", "Добавить 1 час")
 	a.add2hItem = systray.AddMenuItem("Добавить 2ч", "Добавить 2 часа")
+	a.sub10Item = systray.AddMenuItem("Вычесть 10м", "Перенести 10 минут в неактивное")
+	a.sub20Item = systray.AddMenuItem("Вычесть 20м", "Перенести 20 минут в неактивное")
+	a.sub30Item = systray.AddMenuItem("Вычесть 30м", "Перенести 30 минут в неактивное")
 	a.endItem = systray.AddMenuItem("Завершить день", "Завершить день")
 
 	systray.AddSeparator()
@@ -129,6 +135,12 @@ func (a *App) handleActions() {
 			go a.callAction("/add?minutes=60", nil)
 		case <-a.add2hItem.ClickedCh:
 			go a.callAction("/add?minutes=120", nil)
+		case <-a.sub10Item.ClickedCh:
+			go a.callAction("/subtract?minutes=10", nil)
+		case <-a.sub20Item.ClickedCh:
+			go a.callAction("/subtract?minutes=20", nil)
+		case <-a.sub30Item.ClickedCh:
+			go a.callAction("/subtract?minutes=30", nil)
 		case <-a.endItem.ClickedCh:
 			go a.callAction("/end", nil)
 		case <-a.quitItem.ClickedCh:
@@ -171,6 +183,9 @@ func (a *App) updateMenuAvailability(s Status) {
 	a.add30Item.Enable()
 	a.add1hItem.Enable()
 	a.add2hItem.Enable()
+	a.sub10Item.Enable()
+	a.sub20Item.Enable()
+	a.sub30Item.Enable()
 	a.endItem.Enable()
 
 	if !s.Started || s.Ended {
@@ -178,6 +193,9 @@ func (a *App) updateMenuAvailability(s Status) {
 		a.add30Item.Disable()
 		a.add1hItem.Disable()
 		a.add2hItem.Disable()
+		a.sub10Item.Disable()
+		a.sub20Item.Disable()
+		a.sub30Item.Disable()
 		a.endItem.Disable()
 	}
 

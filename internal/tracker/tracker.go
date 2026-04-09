@@ -347,6 +347,51 @@ func (t *Tracker) AddTime(d time.Duration, source string) {
 	}
 }
 
+func (t *Tracker) MoveActiveToInactive(d time.Duration, source string) {
+	if d <= 0 {
+		return
+	}
+
+	var notifier Notifier
+	var moved, active, inactive string
+
+	t.mu.Lock()
+	if !t.started || t.ended {
+		t.mu.Unlock()
+		return
+	}
+
+	now := time.Now()
+	currentActive := t.currentActiveLocked(now)
+	if currentActive <= 0 {
+		t.mu.Unlock()
+		return
+	}
+	if d > currentActive {
+		d = currentActive
+	}
+
+	t.manualAdded -= d
+	t.inactiveTotal += d
+	t.lastStateAt = now
+
+	moved = FormatDuration(d)
+	active = FormatDuration(t.currentActiveLocked(now))
+	inactive = FormatDuration(t.currentInactiveLocked(now))
+	notifier = t.notifier
+	t.mu.Unlock()
+
+	msg := fmt.Sprintf(
+		"➖ Перенесено из активного в неактивное: %s (%s). Активность: %s, неактивность: %s",
+		moved, source, active, inactive,
+	)
+	log.Println(msg)
+	if notifier != nil {
+		notifier.SendLog(msg)
+		notifier.RefreshControls()
+	}
+}
+
 func (t *Tracker) EndSession(reason string) SessionSummary {
 	var msg string
 	var notifier Notifier

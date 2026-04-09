@@ -18,6 +18,17 @@ const webUIHTML = `<!doctype html>
       --danger: #b42318;
       --shadow: 0 18px 50px rgba(37, 27, 8, 0.08);
     }
+    [data-theme="dark"] {
+      --bg: #181614;
+      --card: #221f1b;
+      --ink: #f3eee6;
+      --muted: #b4aa9b;
+      --line: #3a332d;
+      --accent: #28b28c;
+      --accent-2: #d58a4f;
+      --danger: #e35d5d;
+      --shadow: 0 18px 50px rgba(0, 0, 0, 0.28);
+    }
     * { box-sizing: border-box; }
     body {
       margin: 0;
@@ -27,6 +38,11 @@ const webUIHTML = `<!doctype html>
         radial-gradient(circle at top left, #fff7e8 0, transparent 32%),
         linear-gradient(135deg, #efe7d8, #f7f2e8 55%, #ebe4d5);
       min-height: 100vh;
+    }
+    [data-theme="dark"] body {
+      background:
+        radial-gradient(circle at top left, #2b251f 0, transparent 30%),
+        linear-gradient(135deg, #151311, #1b1815 55%, #13110f);
     }
     .wrap {
       width: min(1100px, calc(100% - 32px));
@@ -55,7 +71,7 @@ const webUIHTML = `<!doctype html>
       gap: 18px;
     }
     .card {
-      background: rgba(255, 250, 242, 0.9);
+      background: color-mix(in srgb, var(--card) 92%, transparent);
       border: 1px solid var(--line);
       border-radius: 22px;
       padding: 20px;
@@ -77,7 +93,7 @@ const webUIHTML = `<!doctype html>
       padding: 8px 12px;
       border-radius: 999px;
       border: 1px solid var(--line);
-      background: #fff;
+      background: color-mix(in srgb, var(--card) 70%, #fff 30%);
       font-size: 13px;
     }
     .dot {
@@ -96,7 +112,7 @@ const webUIHTML = `<!doctype html>
       padding: 16px;
       border: 1px solid var(--line);
       border-radius: 18px;
-      background: linear-gradient(180deg, #fff, #fbf5ea);
+      background: linear-gradient(180deg, color-mix(in srgb, var(--card) 78%, #fff 22%), color-mix(in srgb, var(--card) 95%, #f2e8d7 5%));
     }
     .metric-label {
       font-size: 12px;
@@ -142,7 +158,7 @@ const webUIHTML = `<!doctype html>
     }
     button:hover { transform: translateY(-1px); }
     button.secondary { background: var(--accent); }
-    button.ghost { background: #efe5d4; color: var(--ink); }
+    button.ghost { background: color-mix(in srgb, var(--card) 88%, #d9c8ad 12%); color: var(--ink); }
     button.warn { background: var(--accent-2); }
     button.danger { background: var(--danger); }
     button:disabled { opacity: .5; cursor: not-allowed; transform: none; }
@@ -158,7 +174,7 @@ const webUIHTML = `<!doctype html>
       border: 1px solid var(--line);
       border-radius: 16px;
       padding: 14px;
-      background: #fff;
+      background: color-mix(in srgb, var(--card) 86%, #fff 14%);
     }
     .history-top {
       display: flex;
@@ -192,7 +208,10 @@ const webUIHTML = `<!doctype html>
 <body>
   <div class="wrap">
     <section class="hero">
-      <h1>Work Activity<br>Tracker</h1>
+      <div class="status-line">
+        <h1>Work Activity<br>Tracker</h1>
+        <button class="ghost" id="btn-theme">Тёмная тема</button>
+      </div>
       <div class="sub">Тот же HTTP сервер обслуживает API и интерфейс управления. Статус и история обновляются прямо из текущего состояния трекера.</div>
     </section>
 
@@ -237,6 +256,9 @@ const webUIHTML = `<!doctype html>
           <button class="ghost" id="btn-add-30">+30м</button>
           <button class="ghost" id="btn-add-60">+1ч</button>
           <button class="ghost" id="btn-add-120">+2ч</button>
+          <button class="warn" id="btn-sub-10">-10м в неактивное</button>
+          <button class="warn" id="btn-sub-20">-20м в неактивное</button>
+          <button class="warn" id="btn-sub-30">-30м в неактивное</button>
           <button class="danger" id="btn-end">Завершить день</button>
         </div>
         <div class="message" id="message"></div>
@@ -254,6 +276,7 @@ const webUIHTML = `<!doctype html>
 
   <script>
     const state = { status: null };
+    const themeKey = "wat-webui-theme";
 
     const el = (id) => document.getElementById(id);
     const setText = (id, value) => { el(id).textContent = value ?? "-"; };
@@ -310,7 +333,21 @@ const webUIHTML = `<!doctype html>
       el("btn-add-30").disabled = !s.started || s.ended;
       el("btn-add-60").disabled = !s.started || s.ended;
       el("btn-add-120").disabled = !s.started || s.ended;
+      el("btn-sub-10").disabled = !s.started || s.ended;
+      el("btn-sub-20").disabled = !s.started || s.ended;
+      el("btn-sub-30").disabled = !s.started || s.ended;
       el("btn-continue-day").disabled = !(s.can_continue_day && (!s.started || s.ended));
+    }
+
+    function applyTheme(theme) {
+      document.documentElement.setAttribute("data-theme", theme);
+      localStorage.setItem(themeKey, theme);
+      el("btn-theme").textContent = theme === "dark" ? "Светлая тема" : "Тёмная тема";
+    }
+
+    function toggleTheme() {
+      const current = localStorage.getItem(themeKey) || "light";
+      applyTheme(current === "dark" ? "light" : "dark");
     }
 
     function renderHistory(items) {
@@ -386,8 +423,13 @@ const webUIHTML = `<!doctype html>
     el("btn-add-30").onclick = () => doAction("/add?minutes=30", "GET");
     el("btn-add-60").onclick = () => doAction("/add?minutes=60", "GET");
     el("btn-add-120").onclick = () => doAction("/add?minutes=120", "GET");
+    el("btn-sub-10").onclick = () => doAction("/subtract?minutes=10", "GET");
+    el("btn-sub-20").onclick = () => doAction("/subtract?minutes=20", "GET");
+    el("btn-sub-30").onclick = () => doAction("/subtract?minutes=30", "GET");
     el("btn-end").onclick = () => doAction("/end");
+    el("btn-theme").onclick = toggleTheme;
 
+    applyTheme(localStorage.getItem(themeKey) || "light");
     refreshAll();
     setInterval(refreshAll, 5000);
   </script>
