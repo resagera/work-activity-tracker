@@ -663,7 +663,7 @@ func (t *Tracker) notifySoonPause(idle time.Duration) {
 		FormatDuration(idle),
 		FormatDuration(t.cfg.StopAfterWarn.Duration),
 	)
-	if t.notifyFn != nil {
+	if t.cfg.EnableDesktopNotifications && t.notifyFn != nil {
 		_ = t.notifyFn("Work Activity Tracker", text)
 	}
 	t.Logf("⚠️ %s", text)

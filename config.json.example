@@ -3,6 +3,7 @@
   "telegram_chat_id": 0,
   "http_port": 0,
   "auto_start_day": true,
+  "enable_desktop_notifications": true,
   "history_file": "session-history.json",
   "log_file": "",
   "idle_warn_after": "2m",

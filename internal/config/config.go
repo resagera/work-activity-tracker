@@ -50,26 +50,28 @@ func (d Duration) MarshalJSON() ([]byte, error) {
 }
 
 type Config struct {
-	TelegramToken            string   `json:"telegram_token"`
-	TelegramChatID           int64    `json:"telegram_chat_id"`
-	HTTPPort                 int      `json:"http_port"`
-	AutoStartDay             bool     `json:"auto_start_day"`
-	HistoryFile              string   `json:"history_file"`
-	LogFile                  string   `json:"log_file"`
-	IdleWarnAfter            Duration `json:"idle_warn_after"`
-	StopAfterWarn            Duration `json:"stop_after_warn"`
-	PollInterval             Duration `json:"poll_interval"`
-	ExcludedWindowSubstrings []string `json:"excluded_window_substrings"`
-	ShowVersion              bool     `json:"show_version"`
+	TelegramToken              string   `json:"telegram_token"`
+	TelegramChatID             int64    `json:"telegram_chat_id"`
+	HTTPPort                   int      `json:"http_port"`
+	AutoStartDay               bool     `json:"auto_start_day"`
+	EnableDesktopNotifications bool     `json:"enable_desktop_notifications"`
+	HistoryFile                string   `json:"history_file"`
+	LogFile                    string   `json:"log_file"`
+	IdleWarnAfter              Duration `json:"idle_warn_after"`
+	StopAfterWarn              Duration `json:"stop_after_warn"`
+	PollInterval               Duration `json:"poll_interval"`
+	ExcludedWindowSubstrings   []string `json:"excluded_window_substrings"`
+	ShowVersion                bool     `json:"show_version"`
 }
 
 func Default() Config {
 	return Config{
-		AutoStartDay:  true,
-		HistoryFile:   "session-history.json",
-		IdleWarnAfter: Duration{Duration: DefaultIdleWarnAfter},
-		StopAfterWarn: Duration{Duration: DefaultStopAfterWarn},
-		PollInterval:  Duration{Duration: DefaultPollInterval},
+		AutoStartDay:               true,
+		EnableDesktopNotifications: true,
+		HistoryFile:                "session-history.json",
+		IdleWarnAfter:              Duration{Duration: DefaultIdleWarnAfter},
+		StopAfterWarn:              Duration{Duration: DefaultStopAfterWarn},
+		PollInterval:               Duration{Duration: DefaultPollInterval},
 		ExcludedWindowSubstrings: []string{
 			"Telegram",
 			"Youtube",
@@ -156,16 +158,17 @@ func OverrideFromFlags(cfg *Config, args []string) error {
 	fs.SetOutput(os.Stderr)
 
 	var (
-		configPath     = fs.String("config", "", "path to config.json")
-		telegramToken  = fs.String("telegram-token", "", "telegram bot token")
-		telegramChatID = fs.Int64("telegram-chat-id", 0, "telegram chat id")
-		httpPort       = fs.Int("http-port", 0, "http api port, 0 disables api")
-		historyFile    = fs.String("history-file", "", "path to session history json file")
-		logFile        = fs.String("log-file", "", "path to optional log file")
-		idleWarn       = fs.Duration("idle-warn-after", 0, "time without activity before warning")
-		stopAfter      = fs.Duration("stop-after-warn", 0, "time after warning before stop")
-		pollInterval   = fs.Duration("poll-interval", 0, "idle/lock polling interval")
-		showVersion    = fs.Bool("version", false, "show version")
+		configPath                 = fs.String("config", "", "path to config.json")
+		telegramToken              = fs.String("telegram-token", "", "telegram bot token")
+		telegramChatID             = fs.Int64("telegram-chat-id", 0, "telegram chat id")
+		httpPort                   = fs.Int("http-port", 0, "http api port, 0 disables api")
+		enableDesktopNotifications = fs.Bool("enable-desktop-notifications", true, "enable desktop notifications")
+		historyFile                = fs.String("history-file", "", "path to session history json file")
+		logFile                    = fs.String("log-file", "", "path to optional log file")
+		idleWarn                   = fs.Duration("idle-warn-after", 0, "time without activity before warning")
+		stopAfter                  = fs.Duration("stop-after-warn", 0, "time after warning before stop")
+		pollInterval               = fs.Duration("poll-interval", 0, "idle/lock polling interval")
+		showVersion                = fs.Bool("version", false, "show version")
 	)
 
 	if err := fs.Parse(args[1:]); err != nil {
@@ -189,6 +192,7 @@ func OverrideFromFlags(cfg *Config, args []string) error {
 	if *httpPort != 0 {
 		cfg.HTTPPort = *httpPort
 	}
+	cfg.EnableDesktopNotifications = *enableDesktopNotifications
 	if *historyFile != "" {
 		cfg.HistoryFile = *historyFile
 	}
