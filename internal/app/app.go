@@ -76,6 +76,15 @@ func (a *App) Run(ctx context.Context) error {
 func (a *App) runHTTP(ctx context.Context) {
 	mux := http.NewServeMux()
 
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/" {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_, _ = w.Write([]byte(webUIHTML))
+	})
+
 	mux.HandleFunc("/status", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, a.tracker.Summary())
 	})
@@ -146,6 +155,7 @@ func (a *App) runHTTP(ctx context.Context) {
 	}()
 
 	a.tracker.Logf("🌐 HTTP API запущен на :%d", a.cfg.HTTPPort)
+	a.tracker.Logf("🖥 Web UI: http://127.0.0.1:%d/", a.cfg.HTTPPort)
 
 	if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		a.tracker.Logf("HTTP API ошибка: %v", err)
