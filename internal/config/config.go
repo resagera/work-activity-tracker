@@ -54,6 +54,8 @@ type Config struct {
 	TelegramChatID           int64    `json:"telegram_chat_id"`
 	HTTPPort                 int      `json:"http_port"`
 	AutoStartDay             bool     `json:"auto_start_day"`
+	HistoryFile              string   `json:"history_file"`
+	LogFile                  string   `json:"log_file"`
 	IdleWarnAfter            Duration `json:"idle_warn_after"`
 	StopAfterWarn            Duration `json:"stop_after_warn"`
 	PollInterval             Duration `json:"poll_interval"`
@@ -64,6 +66,7 @@ type Config struct {
 func Default() Config {
 	return Config{
 		AutoStartDay:  true,
+		HistoryFile:   "session-history.json",
 		IdleWarnAfter: Duration{Duration: DefaultIdleWarnAfter},
 		StopAfterWarn: Duration{Duration: DefaultStopAfterWarn},
 		PollInterval:  Duration{Duration: DefaultPollInterval},
@@ -157,6 +160,8 @@ func OverrideFromFlags(cfg *Config, args []string) error {
 		telegramToken  = fs.String("telegram-token", "", "telegram bot token")
 		telegramChatID = fs.Int64("telegram-chat-id", 0, "telegram chat id")
 		httpPort       = fs.Int("http-port", 0, "http api port, 0 disables api")
+		historyFile    = fs.String("history-file", "", "path to session history json file")
+		logFile        = fs.String("log-file", "", "path to optional log file")
 		idleWarn       = fs.Duration("idle-warn-after", 0, "time without activity before warning")
 		stopAfter      = fs.Duration("stop-after-warn", 0, "time after warning before stop")
 		pollInterval   = fs.Duration("poll-interval", 0, "idle/lock polling interval")
@@ -183,6 +188,12 @@ func OverrideFromFlags(cfg *Config, args []string) error {
 	}
 	if *httpPort != 0 {
 		cfg.HTTPPort = *httpPort
+	}
+	if *historyFile != "" {
+		cfg.HistoryFile = *historyFile
+	}
+	if *logFile != "" {
+		cfg.LogFile = *logFile
 	}
 	if *idleWarn > 0 {
 		cfg.IdleWarnAfter = Duration{Duration: *idleWarn}

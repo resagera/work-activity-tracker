@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"work-activity-tracker/internal/config"
+	"work-activity-tracker/internal/history"
 	"work-activity-tracker/internal/platform"
 )
 
@@ -18,6 +19,7 @@ type Notifier interface {
 
 type SessionSummary struct {
 	Started          bool          `json:"started"`
+	CanContinueDay   bool          `json:"can_continue_day"`
 	SessionStartedAt time.Time     `json:"session_started_at"`
 	TotalActive      time.Duration `json:"total_active"`
 	TotalInactive    time.Duration `json:"total_inactive"`
@@ -61,6 +63,8 @@ type Tracker struct {
 
 	notifier Notifier
 	notifyFn func(title, body string) error
+
+	resumeRecord *history.SessionRecord
 }
 
 func New(cfg config.Config, notifyFn func(title, body string) error) *Tracker {
@@ -82,6 +86,12 @@ func (t *Tracker) Summary() SessionSummary {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	return t.summaryLocked(time.Now())
+}
+
+func (t *Tracker) SetResumeRecord(record *history.SessionRecord) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.resumeRecord = record
 }
 
 func (t *Tracker) Logf(format string, args ...any) {
@@ -148,6 +158,7 @@ func (t *Tracker) StartNewDay(reason string) SessionSummary {
 	t.pausedManually = false
 	t.warned = false
 	t.ended = false
+	t.resumeRecord = nil
 
 	if !t.locked && !t.blockedByWindow {
 		t.running = true
@@ -160,6 +171,60 @@ func (t *Tracker) StartNewDay(reason string) SessionSummary {
 		"📅 Начат новый день (%s). Состояние: %s",
 		reason,
 		StateText(t.summaryLocked(now)),
+	)
+	summary = t.summaryLocked(now)
+	notifier = t.notifier
+	t.mu.Unlock()
+
+	log.Println(msg)
+	if notifier != nil {
+		notifier.SendLog(msg)
+		notifier.RefreshControls()
+	}
+
+	return summary
+}
+
+func (t *Tracker) ContinueDay(reason string) SessionSummary {
+	var msg string
+	var notifier Notifier
+	var summary SessionSummary
+
+	t.mu.Lock()
+	now := time.Now()
+	if t.resumeRecord == nil {
+		summary = t.summaryLocked(now)
+		t.mu.Unlock()
+		return summary
+	}
+
+	record := *t.resumeRecord
+	t.started = true
+	t.sessionStartedAt = record.SessionStartedAt
+	t.lastStateAt = now
+	t.running = false
+	t.workStartedAt = time.Time{}
+	t.activeTotal = time.Duration(record.TotalActive)
+	t.inactiveStartedAt = time.Time{}
+	t.inactiveTotal = time.Duration(record.TotalInactive)
+	t.manualAdded = time.Duration(record.TotalAdded)
+	t.pausedManually = false
+	t.warned = false
+	t.ended = false
+	t.resumeRecord = nil
+
+	if !t.locked && !t.blockedByWindow {
+		t.running = true
+		t.workStartedAt = now
+	} else {
+		t.ensureInactiveStartedLocked(now)
+	}
+
+	msg = fmt.Sprintf(
+		"🔄 Продолжен день (%s). Активность: %s, неактивность: %s",
+		reason,
+		FormatDuration(t.currentActiveLocked(now)),
+		FormatDuration(t.currentInactiveLocked(now)),
 	)
 	summary = t.summaryLocked(now)
 	notifier = t.notifier
@@ -575,6 +640,7 @@ func (t *Tracker) currentInactiveLocked(now time.Time) time.Duration {
 func (t *Tracker) summaryLocked(now time.Time) SessionSummary {
 	return SessionSummary{
 		Started:          t.started,
+		CanContinueDay:   t.resumeRecord != nil,
 		SessionStartedAt: t.sessionStartedAt,
 		TotalActive:      t.currentActiveLocked(now),
 		TotalInactive:    t.currentInactiveLocked(now),

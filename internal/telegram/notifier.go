@@ -12,24 +12,33 @@ import (
 	"work-activity-tracker/internal/tracker"
 )
 
+type appController interface {
+	Summary() tracker.SessionSummary
+	AddTime(d time.Duration, source string)
+	SetManualPause(paused bool)
+	StartNewDay(reason string) tracker.SessionSummary
+	ContinueDay(reason string) tracker.SessionSummary
+	EndSession(reason string) tracker.SessionSummary
+}
+
 type Notifier struct {
-	bot     *tgbotapi.BotAPI
-	chatID  int64
-	tracker *tracker.Tracker
+	bot    *tgbotapi.BotAPI
+	chatID int64
+	app    appController
 
 	mu                sync.Mutex
 	controlsMessageID int
 }
 
-func New(token string, chatID int64, tr *tracker.Tracker) (*Notifier, error) {
+func New(token string, chatID int64, controller appController) (*Notifier, error) {
 	bot, err := tgbotapi.NewBotAPI(token)
 	if err != nil {
 		return nil, err
 	}
 	return &Notifier{
-		bot:     bot,
-		chatID:  chatID,
-		tracker: tr,
+		bot:    bot,
+		chatID: chatID,
+		app:    controller,
 	}, nil
 }
 
@@ -43,7 +52,7 @@ func (n *Notifier) RefreshControls() {
 }
 
 func (n *Notifier) SendOrReplaceControls() {
-	s := n.tracker.Summary()
+	s := n.app.Summary()
 	text := n.sessionText(s)
 	markup := n.controlsMarkup(s)
 
@@ -162,12 +171,17 @@ func (n *Notifier) controlsMarkup(s tracker.SessionSummary) tgbotapi.InlineKeybo
 			tgbotapi.NewInlineKeyboardButtonData(stateBtnText, stateBtnData),
 			tgbotapi.NewInlineKeyboardButtonData(dayBtnText, dayBtnData),
 		},
-		{
-			tgbotapi.NewInlineKeyboardButtonData("➕ 30м", "add:30m"),
-			tgbotapi.NewInlineKeyboardButtonData("➕ 1ч", "add:1h"),
-			tgbotapi.NewInlineKeyboardButtonData("➕ 2ч", "add:2h"),
-		},
 	}
+	if s.CanContinueDay && (!s.Started || s.Ended) {
+		buttons = append(buttons, []tgbotapi.InlineKeyboardButton{
+			tgbotapi.NewInlineKeyboardButtonData("🔄 Продолжить день", "continue"),
+		})
+	}
+	buttons = append(buttons, []tgbotapi.InlineKeyboardButton{
+		tgbotapi.NewInlineKeyboardButtonData("➕ 30м", "add:30m"),
+		tgbotapi.NewInlineKeyboardButtonData("➕ 1ч", "add:1h"),
+		tgbotapi.NewInlineKeyboardButtonData("➕ 2ч", "add:2h"),
+	})
 
 	return tgbotapi.NewInlineKeyboardMarkup(buttons...)
 }
@@ -180,7 +194,7 @@ func (n *Notifier) handleMessage(msg *tgbotapi.Message) {
 		n.SendOrReplaceControls()
 
 	case text == "/status":
-		s := n.tracker.Summary()
+		s := n.app.Summary()
 		reply := tgbotapi.NewMessage(
 			msg.Chat.ID,
 			fmt.Sprintf(
@@ -203,28 +217,31 @@ func (n *Notifier) handleMessage(msg *tgbotapi.Message) {
 			_, _ = n.bot.Send(tgbotapi.NewMessage(msg.Chat.ID, "Используй формат: /add 1h30m"))
 			return
 		}
-		n.tracker.AddTime(d, "telegram command")
+		n.app.AddTime(d, "telegram command")
 		n.RefreshControls()
 
 	case text == "/pause":
-		n.tracker.SetManualPause(true)
+		n.app.SetManualPause(true)
 
 	case text == "/resume":
-		s := n.tracker.Summary()
+		s := n.app.Summary()
 		if !s.Started || s.Ended {
-			n.tracker.StartNewDay("telegram command")
+			n.app.StartNewDay("telegram command")
 		} else {
-			n.tracker.SetManualPause(false)
+			n.app.SetManualPause(false)
 		}
 
 	case text == "/end":
-		n.tracker.EndSession("telegram command")
+		n.app.EndSession("telegram command")
 
 	case text == "/newday":
-		n.tracker.StartNewDay("telegram command")
+		n.app.StartNewDay("telegram command")
+
+	case text == "/continue":
+		n.app.ContinueDay("telegram command")
 
 	default:
-		_, _ = n.bot.Send(tgbotapi.NewMessage(msg.Chat.ID, "Команды: /start, /status, /newday, /add 1h30m, /pause, /resume, /end"))
+		_, _ = n.bot.Send(tgbotapi.NewMessage(msg.Chat.ID, "Команды: /start, /status, /newday, /continue, /add 1h30m, /pause, /resume, /end"))
 	}
 }
 
@@ -234,22 +251,24 @@ func (n *Notifier) handleCallback(q *tgbotapi.CallbackQuery) {
 	switch {
 	case data == "noop":
 	case data == "pause":
-		n.tracker.SetManualPause(true)
+		n.app.SetManualPause(true)
 	case data == "start":
-		s := n.tracker.Summary()
+		s := n.app.Summary()
 		if !s.Started || s.Ended {
-			n.tracker.StartNewDay("telegram button")
+			n.app.StartNewDay("telegram button")
 		} else {
-			n.tracker.SetManualPause(false)
+			n.app.SetManualPause(false)
 		}
 	case data == "end":
-		n.tracker.EndSession("telegram button")
+		n.app.EndSession("telegram button")
 	case data == "newday":
-		n.tracker.StartNewDay("telegram button")
+		n.app.StartNewDay("telegram button")
+	case data == "continue":
+		n.app.ContinueDay("telegram button")
 	case strings.HasPrefix(data, "add:"):
 		d, err := time.ParseDuration(strings.TrimPrefix(data, "add:"))
 		if err == nil {
-			n.tracker.AddTime(d, "telegram button")
+			n.app.AddTime(d, "telegram button")
 		}
 	}
 

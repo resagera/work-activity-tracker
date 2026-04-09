@@ -11,6 +11,8 @@ import (
 	"time"
 
 	"work-activity-tracker/internal/config"
+	"work-activity-tracker/internal/history"
+	"work-activity-tracker/internal/logging"
 	"work-activity-tracker/internal/platform"
 	"work-activity-tracker/internal/telegram"
 	"work-activity-tracker/internal/tracker"
@@ -20,6 +22,9 @@ type App struct {
 	cfg     config.Config
 	env     platform.Environment
 	tracker *tracker.Tracker
+	history *history.Store
+
+	continuedFromHistory bool
 }
 
 func New(cfg config.Config, env platform.Environment) *App {
@@ -27,14 +32,18 @@ func New(cfg config.Config, env platform.Environment) *App {
 		cfg:     cfg,
 		env:     env,
 		tracker: tracker.New(cfg, env.SendDesktopNotification),
+		history: history.New(cfg.HistoryFile),
 	}
 }
 
 func (a *App) Run(ctx context.Context) error {
 	printConfig(a.cfg)
+	if err := a.loadResumeCandidate(); err != nil {
+		return fmt.Errorf("load history: %w", err)
+	}
 
 	if a.cfg.TelegramToken != "" && a.cfg.TelegramChatID != 0 {
-		notifier, err := telegram.New(a.cfg.TelegramToken, a.cfg.TelegramChatID, a.tracker)
+		notifier, err := telegram.New(a.cfg.TelegramToken, a.cfg.TelegramChatID, a)
 		if err != nil {
 			return fmt.Errorf("telegram init: %w", err)
 		}
@@ -53,13 +62,13 @@ func (a *App) Run(ctx context.Context) error {
 	go a.runActiveWindowPolling(ctx)
 
 	if a.cfg.AutoStartDay {
-		a.tracker.StartNewDay("старт программы")
+		a.StartNewDay("старт программы")
 	} else {
 		a.tracker.Logf("📅 Автостарт дня отключен. Ожидание команды на начало нового дня")
 	}
 
 	<-ctx.Done()
-	summary := a.tracker.EndSession("остановка программы")
+	summary := a.EndSession("остановка программы")
 	printSessionSummary(summary)
 	return nil
 }
@@ -69,6 +78,15 @@ func (a *App) runHTTP(ctx context.Context) {
 
 	mux.HandleFunc("/status", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, a.tracker.Summary())
+	})
+
+	mux.HandleFunc("/history", func(w http.ResponseWriter, r *http.Request) {
+		records, err := a.history.LoadAll()
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusOK, records)
 	})
 
 	mux.HandleFunc("/add", func(w http.ResponseWriter, r *http.Request) {
@@ -84,31 +102,35 @@ func (a *App) runHTTP(ctx context.Context) {
 			return
 		}
 
-		a.tracker.AddTime(time.Duration(minutes)*time.Minute, "http api")
+		a.AddTime(time.Duration(minutes)*time.Minute, "http api")
 		writeJSON(w, http.StatusOK, a.tracker.Summary())
 	})
 
 	mux.HandleFunc("/pause", func(w http.ResponseWriter, r *http.Request) {
-		a.tracker.SetManualPause(true)
+		a.SetManualPause(true)
 		writeJSON(w, http.StatusOK, a.tracker.Summary())
 	})
 
 	mux.HandleFunc("/start", func(w http.ResponseWriter, r *http.Request) {
 		s := a.tracker.Summary()
 		if !s.Started || s.Ended {
-			writeJSON(w, http.StatusOK, a.tracker.StartNewDay("http api"))
+			writeJSON(w, http.StatusOK, a.StartNewDay("http api"))
 			return
 		}
-		a.tracker.SetManualPause(false)
+		a.SetManualPause(false)
 		writeJSON(w, http.StatusOK, a.tracker.Summary())
 	})
 
 	mux.HandleFunc("/new-day", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, http.StatusOK, a.tracker.StartNewDay("http api"))
+		writeJSON(w, http.StatusOK, a.StartNewDay("http api"))
+	})
+
+	mux.HandleFunc("/continue-day", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, http.StatusOK, a.ContinueDay("http api"))
 	})
 
 	mux.HandleFunc("/end", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, http.StatusOK, a.tracker.EndSession("http api"))
+		writeJSON(w, http.StatusOK, a.EndSession("http api"))
 	})
 
 	srv := &http.Server{
@@ -212,7 +234,7 @@ func (a *App) runActiveWindowPolling(ctx context.Context) {
 
 func printConfig(cfg config.Config) {
 	b, _ := json.MarshalIndent(cfg, "", "  ")
-	fmt.Printf("CONFIG:\n%s\n", string(b))
+	logging.Stdoutf("CONFIG:\n%s\n", string(b))
 }
 
 func printSessionSummary(s tracker.SessionSummary) {
@@ -221,7 +243,7 @@ func printSessionSummary(s tracker.SessionSummary) {
 		startedAt = s.SessionStartedAt.Format(time.RFC3339)
 	}
 
-	fmt.Printf(
+	logging.Stdoutf(
 		"SESSION SUMMARY:\n  started_at: %s\n  state: %s\n  active: %s\n  inactive: %s\n  added: %s\n",
 		startedAt,
 		tracker.StateText(s),
@@ -235,4 +257,78 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(v)
+}
+
+func (a *App) Summary() tracker.SessionSummary {
+	return a.tracker.Summary()
+}
+
+func (a *App) AddTime(d time.Duration, source string) {
+	a.tracker.AddTime(d, source)
+}
+
+func (a *App) SetManualPause(paused bool) {
+	a.tracker.SetManualPause(paused)
+}
+
+func (a *App) StartNewDay(reason string) tracker.SessionSummary {
+	a.continuedFromHistory = false
+	a.tracker.SetResumeRecord(nil)
+	return a.tracker.StartNewDay(reason)
+}
+
+func (a *App) ContinueDay(reason string) tracker.SessionSummary {
+	a.continuedFromHistory = true
+	return a.tracker.ContinueDay(reason)
+}
+
+func (a *App) EndSession(reason string) tracker.SessionSummary {
+	before := a.tracker.Summary()
+	summary := a.tracker.EndSession(reason)
+	if before.Started && !before.Ended && summary.Started && summary.Ended {
+		record := history.SessionRecord{
+			SessionStartedAt: summary.SessionStartedAt,
+			SessionEndedAt:   time.Now(),
+			TotalActive:      int64(summary.TotalActive),
+			TotalInactive:    int64(summary.TotalInactive),
+			TotalAdded:       int64(summary.TotalAdded),
+		}
+		if err := a.history.Save(record, a.continuedFromHistory); err != nil {
+			a.tracker.Logf("history save error: %v", err)
+		}
+		a.continuedFromHistory = false
+		if canContinueDay(&record, time.Now()) {
+			a.tracker.SetResumeRecord(&record)
+		} else {
+			a.tracker.SetResumeRecord(nil)
+		}
+		return a.tracker.Summary()
+	}
+	return summary
+}
+
+func (a *App) loadResumeCandidate() error {
+	record, err := a.history.Last()
+	if err != nil {
+		return err
+	}
+	if canContinueDay(record, time.Now()) {
+		a.tracker.SetResumeRecord(record)
+	}
+	return nil
+}
+
+func canContinueDay(record *history.SessionRecord, now time.Time) bool {
+	if record == nil {
+		return false
+	}
+
+	startLocal := record.SessionStartedAt.In(now.Location())
+	nowLocal := now.In(now.Location())
+	sameDay := startLocal.Year() == nowLocal.Year() && startLocal.YearDay() == nowLocal.YearDay()
+	if sameDay {
+		return true
+	}
+
+	return now.Sub(record.SessionEndedAt) < 6*time.Hour
 }

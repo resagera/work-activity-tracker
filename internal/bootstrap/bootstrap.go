@@ -10,13 +10,14 @@ import (
 
 	"work-activity-tracker/internal/app"
 	"work-activity-tracker/internal/config"
+	"work-activity-tracker/internal/logging"
 	"work-activity-tracker/internal/platform"
 	"work-activity-tracker/pkg/version"
 )
 
 func Run(env platform.Environment) {
 	version.MajorVersion = "1"
-	version.MinorVersion = "1"
+	version.MinorVersion = "2"
 
 	cfg, err := config.LoadFromArgs(os.Args[1:])
 	if err != nil {
@@ -27,7 +28,13 @@ func Run(env platform.Environment) {
 		log.Fatalf("parse flags: %v", err)
 	}
 
-	fmt.Println("Version: " + version.Get().SemVer())
+	closeLog, err := logging.Configure(cfg.LogFile)
+	if err != nil {
+		log.Fatalf("configure logging: %v", err)
+	}
+	defer closeLog()
+
+	logging.Stdoutf("Version: %s\n", version.Get().SemVer())
 	if cfg.ShowVersion {
 		return
 	}
