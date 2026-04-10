@@ -159,8 +159,6 @@ const webUIHTML = `<!doctype html>
       width: 100%;
       height: 18px;
       overflow: hidden;
-      border-radius: 999px;
-      border: 1px solid color-mix(in srgb, var(--ink) 14%, transparent);
       background: color-mix(in srgb, var(--card) 72%, #ddd 28%);
       box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.05);
     }
@@ -345,10 +343,11 @@ const webUIHTML = `<!doctype html>
 
         <div class="session-strip-card">
           <div class="session-strip-head">
-            <div class="metric-label" style="margin:0;">Периоды текущей сессии</div>
+            <div class="metric-label" style="margin:0;">Периоды текущей сессии <span class="history-link" id="current-periods-toggle">(показать)</span></div>
             <div class="session-strip-note" id="current-periods-note">Нет данных</div>
           </div>
           <div id="current-periods-strip" class="period-strip-empty">Сессия пока не начата.</div>
+          <div id="current-periods-list" class="history-periods is-hidden"></div>
         </div>
 
         <div class="details">
@@ -488,6 +487,29 @@ const webUIHTML = `<!doctype html>
       return '<div class="period-strip">' + segments + '</div>';
     }
 
+    function buildPeriodsList(periods, emptyText) {
+      const items = Array.isArray(periods) ? periods.filter((period) => period?.started_at && period?.ended_at) : [];
+      if (!items.length) {
+        return '<div class="period-strip-empty">' + escapeHtml(emptyText) + '</div>';
+      }
+
+      return items.map((period) => {
+        const swatch = period.color ? '<span class="swatch" style="background:' + period.color + '"></span>' : "";
+        return '' +
+          '<div class="period-item">' +
+            '<div class="period-head">' +
+              '<strong>' + swatch + escapeHtml(period.type) + '</strong>' +
+              '<span>' + (period.kind === "activity" ? "Активность" : "Неактивность") + '</span>' +
+            '</div>' +
+            '<div class="period-meta">' +
+              new Date(period.started_at).toLocaleString() + ' - ' +
+              new Date(period.ended_at).toLocaleString() +
+              ' · ' + formatDurationFromNs(periodDurationMs(period) * 1e6) +
+            '</div>' +
+          '</div>';
+      }).join("");
+    }
+
     function stateText(s) {
       if (!s.started && s.can_continue_day) return "можно продолжить день";
       if (!s.started) return "день не начат";
@@ -522,7 +544,9 @@ const webUIHTML = `<!doctype html>
       setText("window-class", s.window?.wm_class || "-");
       setText("last-change", s.last_state_change ? new Date(s.last_state_change).toLocaleString() : "-");
       el("current-periods-strip").innerHTML = buildPeriodStrip(s.periods, "Сессия пока не начата.");
+      el("current-periods-list").innerHTML = buildPeriodsList(s.periods, "Нет данных по периодам");
       setText("current-periods-note", Array.isArray(s.periods) && s.periods.length ? "Периодов: " + s.periods.length : "Нет данных");
+      el("current-periods-toggle").textContent = Array.isArray(s.periods) && s.periods.length ? (el("current-periods-list").classList.contains("is-hidden") ? "(показать)" : "(скрыть)") : "";
 
       el("btn-pause").disabled = !s.started || s.ended;
       el("btn-end").disabled = !s.started || s.ended;
@@ -596,21 +620,7 @@ const webUIHTML = `<!doctype html>
         const node = document.createElement("div");
         node.className = "history-item";
         const periods = Array.isArray(item.periods) ? item.periods : [];
-        const periodsHtml = periods.map((period) => {
-              const swatch = period.color ? '<span class="swatch" style="background:' + period.color + '"></span>' : "";
-              return '' +
-                '<div class="period-item">' +
-                  '<div class="period-head">' +
-                    '<strong>' + swatch + escapeHtml(period.type) + '</strong>' +
-                    '<span>' + (period.kind === "activity" ? "Активность" : "Неактивность") + '</span>' +
-                  '</div>' +
-                  '<div class="period-meta">' +
-                    new Date(period.started_at).toLocaleString() + ' - ' +
-                    new Date(period.ended_at).toLocaleString() +
-                    ' · ' + formatDurationFromNs(periodDurationMs(period) * 1e6) +
-                  '</div>' +
-                '</div>';
-            }).join("");
+        const periodsHtml = buildPeriodsList(periods, "Нет данных по периодам");
         const stripHtml = buildPeriodStrip(periods, "Нет данных по периодам");
 
         node.innerHTML =
@@ -802,6 +812,14 @@ const webUIHTML = `<!doctype html>
     el("btn-add-inactivity-type").onclick = addInactivityType;
     el("btn-set-inactivity-type").onclick = setCurrentInactivityType;
     el("btn-set-inactivity-color").onclick = setInactivityTypeColor;
+    el("current-periods-toggle").onclick = () => {
+      const body = el("current-periods-list");
+      if (!body || !body.innerHTML.trim()) {
+        return;
+      }
+      body.classList.toggle("is-hidden");
+      el("current-periods-toggle").textContent = body.classList.contains("is-hidden") ? "(показать)" : "(скрыть)";
+    };
     el("activity-type-select").onchange = () => {
       el("activity-type-color").value = el("activity-type-select").selectedOptions[0]?.dataset.color || "";
     };

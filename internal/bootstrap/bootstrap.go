@@ -50,7 +50,7 @@ func Run(env platform.Environment) {
 
 func Unsupported(target string) {
 	version.MajorVersion = "1"
-	version.MinorVersion = "1"
+	version.MinorVersion = "21"
 
 	fmt.Println("Version: " + version.Get().SemVer())
 	log.Fatalf("%s is not implemented yet", target)
