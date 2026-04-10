@@ -56,6 +56,7 @@ type Config struct {
 	AutoStartDay               bool     `json:"auto_start_day"`
 	EnableDesktopNotifications bool     `json:"enable_desktop_notifications"`
 	HistoryFile                string   `json:"history_file"`
+	InactivityTypesFile        string   `json:"inactivity_types_file"`
 	LogFile                    string   `json:"log_file"`
 	IdleWarnAfter              Duration `json:"idle_warn_after"`
 	StopAfterWarn              Duration `json:"stop_after_warn"`
@@ -69,6 +70,7 @@ func Default() Config {
 		AutoStartDay:               true,
 		EnableDesktopNotifications: true,
 		HistoryFile:                "session-history.json",
+		InactivityTypesFile:        "inactivity-types.json",
 		IdleWarnAfter:              Duration{Duration: DefaultIdleWarnAfter},
 		StopAfterWarn:              Duration{Duration: DefaultStopAfterWarn},
 		PollInterval:               Duration{Duration: DefaultPollInterval},
@@ -164,6 +166,7 @@ func OverrideFromFlags(cfg *Config, args []string) error {
 		httpPort                   = fs.Int("http-port", 0, "http api port, 0 disables api")
 		enableDesktopNotifications = fs.Bool("enable-desktop-notifications", true, "enable desktop notifications")
 		historyFile                = fs.String("history-file", "", "path to session history json file")
+		inactivityTypesFile        = fs.String("inactivity-types-file", "", "path to inactivity types json file")
 		logFile                    = fs.String("log-file", "", "path to optional log file")
 		idleWarn                   = fs.Duration("idle-warn-after", 0, "time without activity before warning")
 		stopAfter                  = fs.Duration("stop-after-warn", 0, "time after warning before stop")
@@ -195,6 +198,9 @@ func OverrideFromFlags(cfg *Config, args []string) error {
 	cfg.EnableDesktopNotifications = *enableDesktopNotifications
 	if *historyFile != "" {
 		cfg.HistoryFile = *historyFile
+	}
+	if *inactivityTypesFile != "" {
+		cfg.InactivityTypesFile = *inactivityTypesFile
 	}
 	if *logFile != "" {
 		cfg.LogFile = *logFile

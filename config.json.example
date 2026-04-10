@@ -5,6 +5,7 @@
   "auto_start_day": true,
   "enable_desktop_notifications": true,
   "history_file": "session-history.json",
+  "inactivity_types_file": "inactivity-types.json",
   "log_file": "",
   "idle_warn_after": "2m",
   "stop_after_warn": "1m",

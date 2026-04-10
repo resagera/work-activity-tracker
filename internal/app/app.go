@@ -12,6 +12,7 @@ import (
 
 	"work-activity-tracker/internal/config"
 	"work-activity-tracker/internal/history"
+	"work-activity-tracker/internal/inactivity"
 	"work-activity-tracker/internal/logging"
 	"work-activity-tracker/internal/platform"
 	"work-activity-tracker/internal/telegram"
@@ -19,25 +20,31 @@ import (
 )
 
 type App struct {
-	cfg     config.Config
-	env     platform.Environment
-	tracker *tracker.Tracker
-	history *history.Store
+	cfg                   config.Config
+	env                   platform.Environment
+	tracker               *tracker.Tracker
+	history               *history.Store
+	inactivityTypes       *inactivity.Store
+	customInactivityTypes []string
 
 	continuedFromHistory bool
 }
 
 func New(cfg config.Config, env platform.Environment) *App {
 	return &App{
-		cfg:     cfg,
-		env:     env,
-		tracker: tracker.New(cfg, env.SendDesktopNotification),
-		history: history.New(cfg.HistoryFile),
+		cfg:             cfg,
+		env:             env,
+		tracker:         tracker.New(cfg, env.SendDesktopNotification),
+		history:         history.New(cfg.HistoryFile),
+		inactivityTypes: inactivity.New(cfg.InactivityTypesFile),
 	}
 }
 
 func (a *App) Run(ctx context.Context) error {
 	printConfig(a.cfg)
+	if err := a.loadInactivityTypes(); err != nil {
+		return fmt.Errorf("load inactivity types: %w", err)
+	}
 	if err := a.loadResumeCandidate(); err != nil {
 		return fmt.Errorf("load history: %w", err)
 	}
@@ -96,6 +103,32 @@ func (a *App) runHTTP(ctx context.Context) {
 			return
 		}
 		writeJSON(w, http.StatusOK, records)
+	})
+
+	mux.HandleFunc("/inactivity-types", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, http.StatusOK, map[string]any{
+			"types":        a.AllInactivityTypes(),
+			"current_type": a.tracker.Summary().CurrentInactivityType,
+		})
+	})
+
+	mux.HandleFunc("/inactivity-types/add", func(w http.ResponseWriter, r *http.Request) {
+		name := r.URL.Query().Get("name")
+		types, err := a.AddInactivityType(name)
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"types": types})
+	})
+
+	mux.HandleFunc("/inactivity-type/set", func(w http.ResponseWriter, r *http.Request) {
+		name := r.URL.Query().Get("name")
+		if err := a.SetCurrentInactivityType(name); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusOK, a.tracker.Summary())
 	})
 
 	mux.HandleFunc("/add", func(w http.ResponseWriter, r *http.Request) {
@@ -298,6 +331,33 @@ func (a *App) MoveActiveToInactive(d time.Duration, source string) {
 	a.tracker.MoveActiveToInactive(d, source)
 }
 
+func (a *App) AllInactivityTypes() []string {
+	return inactivity.All(a.customInactivityTypes)
+}
+
+func (a *App) AddInactivityType(name string) ([]string, error) {
+	types, err := a.inactivityTypes.Add(name)
+	if err != nil {
+		return nil, err
+	}
+	custom, err := a.inactivityTypes.LoadAll()
+	if err == nil {
+		a.customInactivityTypes = custom
+	}
+	return types, nil
+}
+
+func (a *App) SetCurrentInactivityType(name string) error {
+	name = inactivity.NormalizeName(name)
+	if name == "" {
+		return fmt.Errorf("name is required")
+	}
+	if !contains(a.AllInactivityTypes(), name) {
+		return fmt.Errorf("unknown inactivity type: %s", name)
+	}
+	return a.tracker.SetCurrentInactivityType(name)
+}
+
 func (a *App) SetManualPause(paused bool) {
 	a.tracker.SetManualPause(paused)
 }
@@ -349,6 +409,15 @@ func (a *App) loadResumeCandidate() error {
 	return nil
 }
 
+func (a *App) loadInactivityTypes() error {
+	items, err := a.inactivityTypes.LoadAll()
+	if err != nil {
+		return err
+	}
+	a.customInactivityTypes = items
+	return nil
+}
+
 func canContinueDay(record *history.SessionRecord, now time.Time) bool {
 	if record == nil {
 		return false
@@ -362,4 +431,13 @@ func canContinueDay(record *history.SessionRecord, now time.Time) bool {
 	}
 
 	return now.Sub(record.SessionEndedAt) < 6*time.Hour
+}
+
+func contains(items []string, target string) bool {
+	for _, item := range items {
+		if item == target {
+			return true
+		}
+	}
+	return false
 }

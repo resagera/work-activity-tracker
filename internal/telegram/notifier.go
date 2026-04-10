@@ -14,8 +14,11 @@ import (
 
 type appController interface {
 	Summary() tracker.SessionSummary
+	AllInactivityTypes() []string
 	AddTime(d time.Duration, source string)
 	MoveActiveToInactive(d time.Duration, source string)
+	AddInactivityType(name string) ([]string, error)
+	SetCurrentInactivityType(name string) error
 	SetManualPause(paused bool)
 	StartNewDay(reason string) tracker.SessionSummary
 	ContinueDay(reason string) tracker.SessionSummary
@@ -139,9 +142,10 @@ func (n *Notifier) sessionText(s tracker.SessionSummary) string {
 	}
 
 	return fmt.Sprintf(
-		"📅 Сессия\nСтарт: %s\nСостояние: %s\nИтого активности: %s\nИтого неактивности: %s\nОкно: %s\nGTK_APPLICATION_ID: %s\nKDE_NET_WM_DESKTOP_FILE: %s\nWM_CLASS: %s%s",
+		"📅 Сессия\nСтарт: %s\nСостояние: %s\nТип неактивности: %s\nИтого активности: %s\nИтого неактивности: %s\nОкно: %s\nGTK_APPLICATION_ID: %s\nKDE_NET_WM_DESKTOP_FILE: %s\nWM_CLASS: %s%s",
 		startedAt,
 		tracker.StateText(s),
+		tracker.EmptyFallback(s.CurrentInactivityType, "-"),
 		tracker.FormatDuration(s.TotalActive),
 		tracker.FormatDuration(s.TotalInactive),
 		title,
@@ -204,8 +208,9 @@ func (n *Notifier) handleMessage(msg *tgbotapi.Message) {
 		reply := tgbotapi.NewMessage(
 			msg.Chat.ID,
 			fmt.Sprintf(
-				"Состояние: %s\nИтого активности: %s\nИтого неактивности: %s\nОкно: %s\nGTK_APPLICATION_ID: %s\nKDE_NET_WM_DESKTOP_FILE: %s\nWM_CLASS: %s",
+				"Состояние: %s\nТип неактивности: %s\nИтого активности: %s\nИтого неактивности: %s\nОкно: %s\nGTK_APPLICATION_ID: %s\nKDE_NET_WM_DESKTOP_FILE: %s\nWM_CLASS: %s",
 				tracker.StateText(s),
+				tracker.EmptyFallback(s.CurrentInactivityType, "-"),
 				tracker.FormatDuration(s.TotalActive),
 				tracker.FormatDuration(s.TotalInactive),
 				tracker.EmptyFallback(s.Window.Title, "(не определено)"),
@@ -236,6 +241,27 @@ func (n *Notifier) handleMessage(msg *tgbotapi.Message) {
 		n.app.MoveActiveToInactive(d, "telegram command")
 		n.RefreshControls()
 
+	case text == "/itypes":
+		types := n.app.AllInactivityTypes()
+		_, _ = n.bot.Send(tgbotapi.NewMessage(msg.Chat.ID, "Типы неактивности:\n- "+strings.Join(types, "\n- ")))
+
+	case strings.HasPrefix(text, "/itype "):
+		name := strings.TrimSpace(strings.TrimPrefix(text, "/itype "))
+		if err := n.app.SetCurrentInactivityType(name); err != nil {
+			_, _ = n.bot.Send(tgbotapi.NewMessage(msg.Chat.ID, err.Error()))
+			return
+		}
+		n.RefreshControls()
+
+	case strings.HasPrefix(text, "/additype "):
+		name := strings.TrimSpace(strings.TrimPrefix(text, "/additype "))
+		types, err := n.app.AddInactivityType(name)
+		if err != nil {
+			_, _ = n.bot.Send(tgbotapi.NewMessage(msg.Chat.ID, err.Error()))
+			return
+		}
+		_, _ = n.bot.Send(tgbotapi.NewMessage(msg.Chat.ID, "Добавлен тип неактивности.\n- "+strings.Join(types, "\n- ")))
+
 	case text == "/pause":
 		n.app.SetManualPause(true)
 
@@ -257,7 +283,7 @@ func (n *Notifier) handleMessage(msg *tgbotapi.Message) {
 		n.app.ContinueDay("telegram command")
 
 	default:
-		_, _ = n.bot.Send(tgbotapi.NewMessage(msg.Chat.ID, "Команды: /start, /status, /newday, /continue, /add 1h30m, /sub 30m, /pause, /resume, /end"))
+		_, _ = n.bot.Send(tgbotapi.NewMessage(msg.Chat.ID, "Команды: /start, /status, /newday, /continue, /add 1h30m, /sub 30m, /itypes, /itype перекус, /additype прогулка, /pause, /resume, /end"))
 	}
 }
 

@@ -9,6 +9,7 @@ import (
 
 	"work-activity-tracker/internal/config"
 	"work-activity-tracker/internal/history"
+	"work-activity-tracker/internal/inactivity"
 	"work-activity-tracker/internal/platform"
 )
 
@@ -18,12 +19,13 @@ type Notifier interface {
 }
 
 type SessionSummary struct {
-	Started          bool          `json:"started"`
-	CanContinueDay   bool          `json:"can_continue_day"`
-	SessionStartedAt time.Time     `json:"session_started_at"`
-	TotalActive      time.Duration `json:"total_active"`
-	TotalInactive    time.Duration `json:"total_inactive"`
-	TotalAdded       time.Duration `json:"total_added"`
+	Started               bool          `json:"started"`
+	CanContinueDay        bool          `json:"can_continue_day"`
+	SessionStartedAt      time.Time     `json:"session_started_at"`
+	TotalActive           time.Duration `json:"total_active"`
+	TotalInactive         time.Duration `json:"total_inactive"`
+	TotalAdded            time.Duration `json:"total_added"`
+	CurrentInactivityType string        `json:"current_inactivity_type"`
 
 	Running         bool      `json:"running"`
 	PausedManually  bool      `json:"paused_manually"`
@@ -64,7 +66,8 @@ type Tracker struct {
 	notifier Notifier
 	notifyFn func(title, body string) error
 
-	resumeRecord *history.SessionRecord
+	resumeRecord       *history.SessionRecord
+	manualInactiveType string
 }
 
 func New(cfg config.Config, notifyFn func(title, body string) error) *Tracker {
@@ -159,6 +162,7 @@ func (t *Tracker) StartNewDay(reason string) SessionSummary {
 	t.warned = false
 	t.ended = false
 	t.resumeRecord = nil
+	t.manualInactiveType = ""
 
 	if !t.locked && !t.blockedByWindow {
 		t.running = true
@@ -212,6 +216,7 @@ func (t *Tracker) ContinueDay(reason string) SessionSummary {
 	t.warned = false
 	t.ended = false
 	t.resumeRecord = nil
+	t.manualInactiveType = ""
 
 	if !t.locked && !t.blockedByWindow {
 		t.running = true
@@ -291,6 +296,9 @@ func (t *Tracker) SetManualPause(paused bool) {
 			t.running = false
 		}
 		t.pausedManually = true
+		if strings.TrimSpace(t.manualInactiveType) == "" {
+			t.manualInactiveType = inactivity.TypeManualPause
+		}
 		t.ensureInactiveStartedLocked(now)
 		msg = "⏸ Ручная пауза включена"
 	} else {
@@ -313,6 +321,37 @@ func (t *Tracker) SetManualPause(paused bool) {
 		notifier.SendLog(msg)
 		notifier.RefreshControls()
 	}
+}
+
+func (t *Tracker) SetCurrentInactivityType(name string) error {
+	name = inactivity.NormalizeName(name)
+	if name == "" {
+		return fmt.Errorf("inactivity type is required")
+	}
+
+	var notifier Notifier
+
+	t.mu.Lock()
+	if !t.started || t.ended {
+		t.mu.Unlock()
+		return fmt.Errorf("session is not active")
+	}
+	if !t.pausedManually {
+		t.mu.Unlock()
+		return fmt.Errorf("current inactivity type can be set only during manual pause")
+	}
+	t.manualInactiveType = name
+	t.lastStateAt = time.Now()
+	notifier = t.notifier
+	t.mu.Unlock()
+
+	msg := fmt.Sprintf("🏷 Установлен тип неактивности: %s", name)
+	log.Println(msg)
+	if notifier != nil {
+		notifier.SendLog(msg)
+		notifier.RefreshControls()
+	}
+	return nil
 }
 
 func (t *Tracker) AddTime(d time.Duration, source string) {
@@ -684,12 +723,13 @@ func (t *Tracker) currentInactiveLocked(now time.Time) time.Duration {
 
 func (t *Tracker) summaryLocked(now time.Time) SessionSummary {
 	return SessionSummary{
-		Started:          t.started,
-		CanContinueDay:   t.resumeRecord != nil,
-		SessionStartedAt: t.sessionStartedAt,
-		TotalActive:      t.currentActiveLocked(now),
-		TotalInactive:    t.currentInactiveLocked(now),
-		TotalAdded:       t.manualAdded,
+		Started:               t.started,
+		CanContinueDay:        t.resumeRecord != nil,
+		SessionStartedAt:      t.sessionStartedAt,
+		TotalActive:           t.currentActiveLocked(now),
+		TotalInactive:         t.currentInactiveLocked(now),
+		TotalAdded:            t.manualAdded,
+		CurrentInactivityType: t.currentInactivityTypeLocked(),
 
 		Running:         t.running,
 		PausedManually:  t.pausedManually,
@@ -699,6 +739,21 @@ func (t *Tracker) summaryLocked(now time.Time) SessionSummary {
 		Ended:           t.ended,
 
 		Window: t.windowInfo,
+	}
+}
+
+func (t *Tracker) currentInactivityTypeLocked() string {
+	switch {
+	case !t.started || t.running || t.ended:
+		return ""
+	case t.locked:
+		return inactivity.TypeLocked
+	case t.blockedByWindow:
+		return inactivity.TypeBlockedWindow
+	case t.pausedManually:
+		return EmptyFallback(t.manualInactiveType, inactivity.TypeManualPause)
+	default:
+		return inactivity.TypeIdle
 	}
 }
 

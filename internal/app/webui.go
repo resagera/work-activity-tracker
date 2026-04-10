@@ -146,6 +146,21 @@ const webUIHTML = `<!doctype html>
       gap: 10px;
       margin-bottom: 12px;
     }
+    .row {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      margin-top: 12px;
+    }
+    select, input {
+      width: 100%;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      padding: 14px 16px;
+      background: color-mix(in srgb, var(--card) 86%, #fff 14%);
+      color: var(--ink);
+      font: inherit;
+    }
     button {
       border: 0;
       border-radius: 14px;
@@ -238,6 +253,7 @@ const webUIHTML = `<!doctype html>
         </div>
 
         <div class="details">
+          <div class="details-row"><div class="details-key">Тип неактивности</div><div id="current-inactivity-type">-</div></div>
           <div class="details-row"><div class="details-key">Активное окно</div><div id="window-title">-</div></div>
           <div class="details-row"><div class="details-key">GTK App ID</div><div id="window-gtk">-</div></div>
           <div class="details-row"><div class="details-key">KDE Desktop File</div><div id="window-kde">-</div></div>
@@ -261,6 +277,14 @@ const webUIHTML = `<!doctype html>
           <button class="warn" id="btn-sub-30">-30м в неактивное</button>
           <button class="danger" id="btn-end">Завершить день</button>
         </div>
+        <div class="row">
+          <select id="inactivity-type-select"></select>
+          <button class="ghost" id="btn-set-inactivity-type">Установить тип</button>
+        </div>
+        <div class="row">
+          <input id="new-inactivity-type" placeholder="Новый тип неактивности, например: перекус">
+          <button class="ghost" id="btn-add-inactivity-type">Добавить тип</button>
+        </div>
         <div class="message" id="message"></div>
       </section>
     </div>
@@ -275,7 +299,7 @@ const webUIHTML = `<!doctype html>
   </div>
 
   <script>
-    const state = { status: null };
+    const state = { status: null, inactivityTypes: [] };
     const themeKey = "wat-webui-theme";
 
     const el = (id) => document.getElementById(id);
@@ -322,6 +346,7 @@ const webUIHTML = `<!doctype html>
       setText("active-total", formatDurationFromNs(s.total_active));
       setText("inactive-total", formatDurationFromNs(s.total_inactive));
       setText("added-total", formatDurationFromNs(s.total_added));
+      setText("current-inactivity-type", s.current_inactivity_type || "-");
       setText("window-title", s.window?.title || "-");
       setText("window-gtk", s.window?.gtk_application_id || "-");
       setText("window-kde", s.window?.kde_net_wm_desktop_file || "-");
@@ -337,6 +362,22 @@ const webUIHTML = `<!doctype html>
       el("btn-sub-20").disabled = !s.started || s.ended;
       el("btn-sub-30").disabled = !s.started || s.ended;
       el("btn-continue-day").disabled = !(s.can_continue_day && (!s.started || s.ended));
+      el("btn-set-inactivity-type").disabled = !(s.started && !s.ended && s.paused_manually);
+    }
+
+    function renderInactivityTypes(payload) {
+      state.inactivityTypes = payload.types || [];
+      const select = el("inactivity-type-select");
+      select.innerHTML = "";
+      state.inactivityTypes.forEach((name) => {
+        const option = document.createElement("option");
+        option.value = name;
+        option.textContent = name;
+        if (name === payload.current_type) {
+          option.selected = true;
+        }
+        select.appendChild(option);
+      });
     }
 
     function applyTheme(theme) {
@@ -390,8 +431,10 @@ const webUIHTML = `<!doctype html>
           api("/status"),
           api("/history"),
         ]);
+        const inactivityTypes = await api("/inactivity-types");
         renderStatus(status);
         renderHistory(history);
+        renderInactivityTypes(inactivityTypes);
         if (showMessage) {
           setMessage("Данные обновлены");
         }
@@ -415,6 +458,37 @@ const webUIHTML = `<!doctype html>
       }
     }
 
+    async function addInactivityType() {
+      const input = el("new-inactivity-type");
+      const name = input.value.trim();
+      if (!name) {
+        setMessage("Введите название типа", true);
+        return;
+      }
+      try {
+        await api("/inactivity-types/add?name=" + encodeURIComponent(name), { method: "POST" });
+        input.value = "";
+        await refreshAll();
+      } catch (err) {
+        setMessage(err.message || String(err), true);
+      }
+    }
+
+    async function setCurrentInactivityType() {
+      const select = el("inactivity-type-select");
+      const name = select.value;
+      if (!name) {
+        setMessage("Выберите тип неактивности", true);
+        return;
+      }
+      try {
+        await api("/inactivity-type/set?name=" + encodeURIComponent(name), { method: "POST" });
+        await refreshAll();
+      } catch (err) {
+        setMessage(err.message || String(err), true);
+      }
+    }
+
     el("btn-refresh").onclick = () => refreshAll(true);
     el("btn-start").onclick = () => doAction("/start");
     el("btn-pause").onclick = () => doAction("/pause");
@@ -428,6 +502,8 @@ const webUIHTML = `<!doctype html>
     el("btn-sub-30").onclick = () => doAction("/subtract?minutes=30", "GET");
     el("btn-end").onclick = () => doAction("/end");
     el("btn-theme").onclick = toggleTheme;
+    el("btn-add-inactivity-type").onclick = addInactivityType;
+    el("btn-set-inactivity-type").onclick = setCurrentInactivityType;
 
     applyTheme(localStorage.getItem(themeKey) || "light");
     refreshAll();
