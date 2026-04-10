@@ -200,15 +200,8 @@ const webUIHTML = `<!doctype html>
       background: color-mix(in srgb, var(--card) 86%, #fff 14%);
       overflow: hidden;
     }
-    .history-toggle {
-      all: unset;
-      display: block;
-      width: 100%;
+    .history-summary {
       padding: 14px;
-      cursor: pointer;
-    }
-    .history-toggle:hover {
-      background: color-mix(in srgb, var(--card) 70%, #fff 30%);
     }
     .history-top {
       display: flex;
@@ -224,11 +217,20 @@ const webUIHTML = `<!doctype html>
       gap: 10px;
       font-size: 14px;
     }
+    .history-link {
+      color: var(--accent);
+      cursor: pointer;
+      text-decoration: underline;
+      text-underline-offset: 2px;
+    }
     .history-periods {
       border-top: 1px dashed var(--line);
       padding: 14px;
       display: grid;
       gap: 10px;
+    }
+    .is-hidden {
+      display: none !important;
     }
     .period-item {
       border: 1px solid var(--line);
@@ -496,8 +498,7 @@ const webUIHTML = `<!doctype html>
         const node = document.createElement("div");
         node.className = "history-item";
         const periods = Array.isArray(item.periods) ? item.periods : [];
-        const periodsHtml = periods.length
-          ? periods.map((period) => {
+        const periodsHtml = periods.map((period) => {
               const swatch = period.color ? '<span class="swatch" style="background:' + period.color + '"></span>' : "";
               return '' +
                 '<div class="period-item">' +
@@ -511,11 +512,10 @@ const webUIHTML = `<!doctype html>
                     ' · ' + formatDurationFromNs(new Date(period.ended_at).getTime() * 1e6 - new Date(period.started_at).getTime() * 1e6) +
                   '</div>' +
                 '</div>';
-            }).join("")
-          : '<div class="period-item">Периоды в этой версии истории отсутствуют.</div>';
+            }).join("");
 
         node.innerHTML =
-          '<button class="history-toggle" type="button">' +
+          '<div class="history-summary">' +
             '<div class="history-top">' +
               '<span>' + new Date(item.session_started_at).toLocaleString() + '</span>' +
               '<span>' + new Date(item.session_ended_at).toLocaleString() + '</span>' +
@@ -524,15 +524,18 @@ const webUIHTML = `<!doctype html>
               '<strong>Активность: ' + formatDurationFromNs(item.total_active) + '</strong>' +
               '<span>Неактивность: ' + formatDurationFromNs(item.total_inactive) + '</span>' +
               '<span>Добавлено: ' + formatDurationFromNs(item.total_added) + '</span>' +
-              '<span>Периодов: ' + periods.length + '</span>' +
+              '<span>Периодов: ' + periods.length + (periods.length ? ' <span class="history-link">(показать)</span>' : '') + '</span>' +
             '</div>' +
-          '</button>' +
-          '<div class="history-periods" hidden>' + periodsHtml + '</div>';
-        const toggle = node.querySelector(".history-toggle");
+          '</div>' +
+          (periods.length ? '<div class="history-periods is-hidden">' + periodsHtml + '</div>' : '');
+        const toggle = node.querySelector(".history-link");
         const body = node.querySelector(".history-periods");
-        toggle.onclick = () => {
-          body.hidden = !body.hidden;
-        };
+        if (toggle && body) {
+          toggle.onclick = () => {
+            body.classList.toggle("is-hidden");
+            toggle.textContent = body.classList.contains("is-hidden") ? "(показать)" : "(скрыть)";
+          };
+        }
         root.appendChild(node);
       });
     }
