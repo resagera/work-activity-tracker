@@ -18,7 +18,7 @@ type TypeDefinition struct {
 }
 
 var BuiltinTypes = []TypeDefinition{
-	{Name: TypeWork, Color: "#0d7a5f"},
+	{Name: TypeWork, Color: "#20256a"},
 }
 
 type Store struct {

@@ -109,6 +109,9 @@ func (a *App) runHTTP(ctx context.Context) {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 			return
 		}
+		for i := range records {
+			records[i].Periods = a.enrichHistoryPeriods(records[i].Periods)
+		}
 		writeJSON(w, http.StatusOK, records)
 	})
 
@@ -381,6 +384,7 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 
 func (a *App) Summary() tracker.SessionSummary {
 	s := a.tracker.Summary()
+	s.Periods = a.enrichHistoryPeriods(s.Periods)
 	s.CurrentActivityColor = activity.FindColor(a.ActivityTypeDefinitions(), s.CurrentActivityType)
 	s.CurrentInactivityColor = inactivity.FindColor(a.InactivityTypeDefinitions(), s.CurrentInactivityType)
 	return s

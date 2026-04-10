@@ -135,6 +135,53 @@ const webUIHTML = `<!doctype html>
       font-weight: 700;
       letter-spacing: -0.04em;
     }
+    .session-strip-card {
+      display: grid;
+      gap: 10px;
+      margin-bottom: 16px;
+      padding: 14px 16px;
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      background: linear-gradient(180deg, color-mix(in srgb, var(--card) 78%, #fff 22%), color-mix(in srgb, var(--card) 95%, #f2e8d7 5%));
+    }
+    .session-strip-head {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      align-items: center;
+    }
+    .session-strip-note {
+      font-size: 12px;
+      color: var(--muted);
+    }
+    .period-strip {
+      display: flex;
+      width: 100%;
+      height: 18px;
+      overflow: hidden;
+      border-radius: 999px;
+      border: 1px solid color-mix(in srgb, var(--ink) 14%, transparent);
+      background: color-mix(in srgb, var(--card) 72%, #ddd 28%);
+      box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.05);
+    }
+    .period-segment {
+      min-width: 2px;
+      height: 100%;
+      flex-basis: 0;
+    }
+    .period-strip-empty {
+      font-size: 12px;
+      color: var(--muted);
+    }
+    .history-visual {
+      margin-top: 12px;
+      display: grid;
+      gap: 6px;
+    }
+    .history-visual-label {
+      font-size: 12px;
+      color: var(--muted);
+    }
     .details {
       display: grid;
       gap: 10px;
@@ -296,6 +343,14 @@ const webUIHTML = `<!doctype html>
           </div>
         </div>
 
+        <div class="session-strip-card">
+          <div class="session-strip-head">
+            <div class="metric-label" style="margin:0;">Периоды текущей сессии</div>
+            <div class="session-strip-note" id="current-periods-note">Нет данных</div>
+          </div>
+          <div id="current-periods-strip" class="period-strip-empty">Сессия пока не начата.</div>
+        </div>
+
         <div class="details">
           <div class="details-row"><div class="details-key">Тип активности</div><div id="current-activity-type">-</div></div>
           <div class="details-row"><div class="details-key">Тип неактивности</div><div id="current-inactivity-type">-</div></div>
@@ -312,7 +367,7 @@ const webUIHTML = `<!doctype html>
           <button class="secondary" id="btn-refresh">Обновить</button>
           <button class="secondary" id="btn-start">Старт / Возобновить</button>
           <button class="ghost" id="btn-pause">Пауза</button>
-          <button class="ghost" id="btn-new-day">Начать новый день</button>
+          <button class="secondary" id="btn-new-day">Начать новый день</button>
           <button class="warn" id="btn-continue-day">Продолжить день</button>
           <button class="ghost" id="btn-add-30">+30м</button>
           <button class="ghost" id="btn-add-60">+1ч</button>
@@ -327,7 +382,7 @@ const webUIHTML = `<!doctype html>
           <button class="ghost" id="btn-set-activity-type">Установить тип активности</button>
         </div>
         <div class="row">
-          <input id="activity-type-color" placeholder="#0d7a5f">
+          <input id="activity-type-color" placeholder="#20256a">
           <button class="ghost" id="btn-set-activity-color">Установить цвет активности</button>
         </div>
         <div class="row">
@@ -392,6 +447,47 @@ const webUIHTML = `<!doctype html>
       return parts.join(" ");
     }
 
+    function escapeHtml(value) {
+      return String(value ?? "")
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;")
+        .replaceAll("'", "&#39;");
+    }
+
+    function periodDurationMs(period) {
+      const started = new Date(period.started_at).getTime();
+      const ended = new Date(period.ended_at).getTime();
+      return Math.max(ended - started, 1);
+    }
+
+    function fallbackPeriodColor(period) {
+      return period.kind === "activity" ? "var(--accent)" : "var(--accent-2)";
+    }
+
+    function buildPeriodStrip(periods, emptyText) {
+      const items = Array.isArray(periods) ? periods.filter((period) => period?.started_at && period?.ended_at) : [];
+      if (!items.length) {
+        return '<div class="period-strip-empty">' + escapeHtml(emptyText) + '</div>';
+      }
+
+      const totalMs = items.reduce((sum, period) => sum + periodDurationMs(period), 0);
+      const segments = items.map((period) => {
+        const durationMs = periodDurationMs(period);
+        const percent = totalMs > 0 ? (durationMs / totalMs) * 100 : 0;
+        const color = period.color || fallbackPeriodColor(period);
+        const title =
+          (period.kind === "activity" ? "Активность" : "Неактивность") +
+          ": " + (period.type || "-") +
+          " • " + formatDurationFromNs(durationMs * 1e6) +
+          " • " + percent.toFixed(1) + "%";
+        return '<span class="period-segment" title="' + escapeHtml(title) + '" style="flex-grow:' + durationMs + ';background:' + escapeHtml(color) + ';"></span>';
+      }).join("");
+
+      return '<div class="period-strip">' + segments + '</div>';
+    }
+
     function stateText(s) {
       if (!s.started && s.can_continue_day) return "можно продолжить день";
       if (!s.started) return "день не начат";
@@ -425,6 +521,8 @@ const webUIHTML = `<!doctype html>
       setText("window-kde", s.window?.kde_net_wm_desktop_file || "-");
       setText("window-class", s.window?.wm_class || "-");
       setText("last-change", s.last_state_change ? new Date(s.last_state_change).toLocaleString() : "-");
+      el("current-periods-strip").innerHTML = buildPeriodStrip(s.periods, "Сессия пока не начата.");
+      setText("current-periods-note", Array.isArray(s.periods) && s.periods.length ? "Периодов: " + s.periods.length : "Нет данных");
 
       el("btn-pause").disabled = !s.started || s.ended;
       el("btn-end").disabled = !s.started || s.ended;
@@ -503,16 +601,17 @@ const webUIHTML = `<!doctype html>
               return '' +
                 '<div class="period-item">' +
                   '<div class="period-head">' +
-                    '<strong>' + swatch + period.type + '</strong>' +
+                    '<strong>' + swatch + escapeHtml(period.type) + '</strong>' +
                     '<span>' + (period.kind === "activity" ? "Активность" : "Неактивность") + '</span>' +
                   '</div>' +
                   '<div class="period-meta">' +
                     new Date(period.started_at).toLocaleString() + ' - ' +
                     new Date(period.ended_at).toLocaleString() +
-                    ' · ' + formatDurationFromNs(new Date(period.ended_at).getTime() * 1e6 - new Date(period.started_at).getTime() * 1e6) +
+                    ' · ' + formatDurationFromNs(periodDurationMs(period) * 1e6) +
                   '</div>' +
                 '</div>';
             }).join("");
+        const stripHtml = buildPeriodStrip(periods, "Нет данных по периодам");
 
         node.innerHTML =
           '<div class="history-summary">' +
@@ -525,6 +624,10 @@ const webUIHTML = `<!doctype html>
               '<span>Неактивность: ' + formatDurationFromNs(item.total_inactive) + '</span>' +
               '<span>Добавлено: ' + formatDurationFromNs(item.total_added) + '</span>' +
               '<span>Периодов: ' + periods.length + (periods.length ? ' <span class="history-link">(показать)</span>' : '') + '</span>' +
+            '</div>' +
+            '<div class="history-visual">' +
+              '<div class="history-visual-label">Периоды сессии</div>' +
+              stripHtml +
             '</div>' +
           '</div>' +
           (periods.length ? '<div class="history-periods is-hidden">' + periodsHtml + '</div>' : '');

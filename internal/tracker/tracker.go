@@ -20,16 +20,17 @@ type Notifier interface {
 }
 
 type SessionSummary struct {
-	Started                bool          `json:"started"`
-	CanContinueDay         bool          `json:"can_continue_day"`
-	SessionStartedAt       time.Time     `json:"session_started_at"`
-	TotalActive            time.Duration `json:"total_active"`
-	TotalInactive          time.Duration `json:"total_inactive"`
-	TotalAdded             time.Duration `json:"total_added"`
-	CurrentActivityType    string        `json:"current_activity_type"`
-	CurrentActivityColor   string        `json:"current_activity_color"`
-	CurrentInactivityType  string        `json:"current_inactivity_type"`
-	CurrentInactivityColor string        `json:"current_inactivity_color"`
+	Started                bool                    `json:"started"`
+	CanContinueDay         bool                    `json:"can_continue_day"`
+	SessionStartedAt       time.Time               `json:"session_started_at"`
+	TotalActive            time.Duration           `json:"total_active"`
+	TotalInactive          time.Duration           `json:"total_inactive"`
+	TotalAdded             time.Duration           `json:"total_added"`
+	Periods                []history.SessionPeriod `json:"periods,omitempty"`
+	CurrentActivityType    string                  `json:"current_activity_type"`
+	CurrentActivityColor   string                  `json:"current_activity_color"`
+	CurrentInactivityType  string                  `json:"current_inactivity_type"`
+	CurrentInactivityColor string                  `json:"current_inactivity_color"`
 
 	Running         bool      `json:"running"`
 	PausedManually  bool      `json:"paused_manually"`
@@ -819,6 +820,8 @@ func (t *Tracker) currentInactiveLocked(now time.Time) time.Duration {
 }
 
 func (t *Tracker) summaryLocked(now time.Time) SessionSummary {
+	t.syncPeriodLocked(now)
+	periods := append([]history.SessionPeriod{}, t.periods...)
 	return SessionSummary{
 		Started:                t.started,
 		CanContinueDay:         t.resumeRecord != nil,
@@ -826,6 +829,7 @@ func (t *Tracker) summaryLocked(now time.Time) SessionSummary {
 		TotalActive:            t.currentActiveLocked(now),
 		TotalInactive:          t.currentInactiveLocked(now),
 		TotalAdded:             t.manualAdded,
+		Periods:                periods,
 		CurrentActivityType:    t.currentActivityTypeLocked(),
 		CurrentActivityColor:   t.currentActivityColorLocked(),
 		CurrentInactivityType:  t.currentInactivityTypeLocked(),
