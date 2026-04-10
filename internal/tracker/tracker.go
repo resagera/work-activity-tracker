@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"work-activity-tracker/internal/activity"
 	"work-activity-tracker/internal/config"
 	"work-activity-tracker/internal/history"
 	"work-activity-tracker/internal/inactivity"
@@ -25,6 +26,7 @@ type SessionSummary struct {
 	TotalActive           time.Duration `json:"total_active"`
 	TotalInactive         time.Duration `json:"total_inactive"`
 	TotalAdded            time.Duration `json:"total_added"`
+	CurrentActivityType   string        `json:"current_activity_type"`
 	CurrentInactivityType string        `json:"current_inactivity_type"`
 
 	Running         bool      `json:"running"`
@@ -66,16 +68,18 @@ type Tracker struct {
 	notifier Notifier
 	notifyFn func(title, body string) error
 
-	resumeRecord       *history.SessionRecord
-	manualInactiveType string
+	resumeRecord        *history.SessionRecord
+	currentActivityType string
+	manualInactiveType  string
 }
 
 func New(cfg config.Config, notifyFn func(title, body string) error) *Tracker {
 	now := time.Now()
 	return &Tracker{
-		cfg:         cfg,
-		lastStateAt: now,
-		notifyFn:    notifyFn,
+		cfg:                 cfg,
+		lastStateAt:         now,
+		notifyFn:            notifyFn,
+		currentActivityType: activity.DefaultType(cfg.DefaultActivityType),
 	}
 }
 
@@ -162,6 +166,7 @@ func (t *Tracker) StartNewDay(reason string) SessionSummary {
 	t.warned = false
 	t.ended = false
 	t.resumeRecord = nil
+	t.currentActivityType = activity.DefaultType(t.cfg.DefaultActivityType)
 	t.manualInactiveType = ""
 
 	if !t.locked && !t.blockedByWindow {
@@ -216,6 +221,7 @@ func (t *Tracker) ContinueDay(reason string) SessionSummary {
 	t.warned = false
 	t.ended = false
 	t.resumeRecord = nil
+	t.currentActivityType = activity.DefaultType(t.cfg.DefaultActivityType)
 	t.manualInactiveType = ""
 
 	if !t.locked && !t.blockedByWindow {
@@ -346,6 +352,33 @@ func (t *Tracker) SetCurrentInactivityType(name string) error {
 	t.mu.Unlock()
 
 	msg := fmt.Sprintf("🏷 Установлен тип неактивности: %s", name)
+	log.Println(msg)
+	if notifier != nil {
+		notifier.SendLog(msg)
+		notifier.RefreshControls()
+	}
+	return nil
+}
+
+func (t *Tracker) SetCurrentActivityType(name string) error {
+	name = activity.NormalizeName(name)
+	if name == "" {
+		return fmt.Errorf("activity type is required")
+	}
+
+	var notifier Notifier
+
+	t.mu.Lock()
+	if !t.started || t.ended {
+		t.mu.Unlock()
+		return fmt.Errorf("session is not active")
+	}
+	t.currentActivityType = name
+	t.lastStateAt = time.Now()
+	notifier = t.notifier
+	t.mu.Unlock()
+
+	msg := fmt.Sprintf("🏷 Установлен тип активности: %s", name)
 	log.Println(msg)
 	if notifier != nil {
 		notifier.SendLog(msg)
@@ -729,6 +762,7 @@ func (t *Tracker) summaryLocked(now time.Time) SessionSummary {
 		TotalActive:           t.currentActiveLocked(now),
 		TotalInactive:         t.currentInactiveLocked(now),
 		TotalAdded:            t.manualAdded,
+		CurrentActivityType:   t.currentActivityTypeLocked(),
 		CurrentInactivityType: t.currentInactivityTypeLocked(),
 
 		Running:         t.running,
@@ -740,6 +774,13 @@ func (t *Tracker) summaryLocked(now time.Time) SessionSummary {
 
 		Window: t.windowInfo,
 	}
+}
+
+func (t *Tracker) currentActivityTypeLocked() string {
+	if !t.started || t.ended {
+		return ""
+	}
+	return EmptyFallback(t.currentActivityType, activity.DefaultType(t.cfg.DefaultActivityType))
 }
 
 func (t *Tracker) currentInactivityTypeLocked() string {

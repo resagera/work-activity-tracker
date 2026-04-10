@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"work-activity-tracker/internal/activity"
 	"work-activity-tracker/internal/config"
 	"work-activity-tracker/internal/history"
 	"work-activity-tracker/internal/inactivity"
@@ -24,6 +25,8 @@ type App struct {
 	env                   platform.Environment
 	tracker               *tracker.Tracker
 	history               *history.Store
+	activityTypes         *activity.Store
+	customActivityTypes   []string
 	inactivityTypes       *inactivity.Store
 	customInactivityTypes []string
 
@@ -36,12 +39,16 @@ func New(cfg config.Config, env platform.Environment) *App {
 		env:             env,
 		tracker:         tracker.New(cfg, env.SendDesktopNotification),
 		history:         history.New(cfg.HistoryFile),
+		activityTypes:   activity.New(cfg.ActivityTypesFile),
 		inactivityTypes: inactivity.New(cfg.InactivityTypesFile),
 	}
 }
 
 func (a *App) Run(ctx context.Context) error {
 	printConfig(a.cfg)
+	if err := a.loadActivityTypes(); err != nil {
+		return fmt.Errorf("load activity types: %w", err)
+	}
 	if err := a.loadInactivityTypes(); err != nil {
 		return fmt.Errorf("load inactivity types: %w", err)
 	}
@@ -103,6 +110,33 @@ func (a *App) runHTTP(ctx context.Context) {
 			return
 		}
 		writeJSON(w, http.StatusOK, records)
+	})
+
+	mux.HandleFunc("/activity-types", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, http.StatusOK, map[string]any{
+			"types":        a.AllActivityTypes(),
+			"default_type": activity.DefaultType(a.cfg.DefaultActivityType),
+			"current_type": a.tracker.Summary().CurrentActivityType,
+		})
+	})
+
+	mux.HandleFunc("/activity-types/add", func(w http.ResponseWriter, r *http.Request) {
+		name := r.URL.Query().Get("name")
+		types, err := a.AddActivityType(name)
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"types": types})
+	})
+
+	mux.HandleFunc("/activity-type/set", func(w http.ResponseWriter, r *http.Request) {
+		name := r.URL.Query().Get("name")
+		if err := a.SetCurrentActivityType(name); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusOK, a.tracker.Summary())
 	})
 
 	mux.HandleFunc("/inactivity-types", func(w http.ResponseWriter, r *http.Request) {
@@ -335,6 +369,38 @@ func (a *App) AllInactivityTypes() []string {
 	return inactivity.All(a.customInactivityTypes)
 }
 
+func (a *App) AllActivityTypes() []string {
+	items := append([]string{}, a.customActivityTypes...)
+	defaultType := activity.DefaultType(a.cfg.DefaultActivityType)
+	if !contains(items, defaultType) {
+		items = append(items, defaultType)
+	}
+	return activity.All(items)
+}
+
+func (a *App) AddActivityType(name string) ([]string, error) {
+	types, err := a.activityTypes.Add(name)
+	if err != nil {
+		return nil, err
+	}
+	custom, err := a.activityTypes.LoadAll()
+	if err == nil {
+		a.customActivityTypes = custom
+	}
+	return types, nil
+}
+
+func (a *App) SetCurrentActivityType(name string) error {
+	name = activity.NormalizeName(name)
+	if name == "" {
+		return fmt.Errorf("name is required")
+	}
+	if !contains(a.AllActivityTypes(), name) {
+		return fmt.Errorf("unknown activity type: %s", name)
+	}
+	return a.tracker.SetCurrentActivityType(name)
+}
+
 func (a *App) AddInactivityType(name string) ([]string, error) {
 	types, err := a.inactivityTypes.Add(name)
 	if err != nil {
@@ -406,6 +472,15 @@ func (a *App) loadResumeCandidate() error {
 	if canContinueDay(record, time.Now()) {
 		a.tracker.SetResumeRecord(record)
 	}
+	return nil
+}
+
+func (a *App) loadActivityTypes() error {
+	items, err := a.activityTypes.LoadAll()
+	if err != nil {
+		return err
+	}
+	a.customActivityTypes = items
 	return nil
 }
 

@@ -5,6 +5,8 @@
   "auto_start_day": true,
   "enable_desktop_notifications": true,
   "history_file": "session-history.json",
+  "activity_types_file": "activity-types.json",
+  "default_activity_type": "работа",
   "inactivity_types_file": "inactivity-types.json",
   "log_file": "",
   "idle_warn_after": "2m",

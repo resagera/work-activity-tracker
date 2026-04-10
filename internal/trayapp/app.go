@@ -16,28 +16,30 @@ import (
 )
 
 type Status struct {
-	Started          bool          `json:"started"`
-	CanContinueDay   bool          `json:"can_continue_day"`
-	SessionStartedAt time.Time     `json:"session_started_at"`
-	TotalActive      time.Duration `json:"total_active"`
-	TotalInactive    time.Duration `json:"total_inactive"`
-	TotalAdded       time.Duration `json:"total_added"`
-	Running          bool          `json:"running"`
-	PausedManually   bool          `json:"paused_manually"`
-	Locked           bool          `json:"locked"`
-	BlockedByWindow  bool          `json:"blocked_by_window"`
-	LastStateChange  time.Time     `json:"last_state_change"`
-	Ended            bool          `json:"ended"`
+	Started             bool          `json:"started"`
+	CanContinueDay      bool          `json:"can_continue_day"`
+	SessionStartedAt    time.Time     `json:"session_started_at"`
+	TotalActive         time.Duration `json:"total_active"`
+	TotalInactive       time.Duration `json:"total_inactive"`
+	TotalAdded          time.Duration `json:"total_added"`
+	CurrentActivityType string        `json:"current_activity_type"`
+	Running             bool          `json:"running"`
+	PausedManually      bool          `json:"paused_manually"`
+	Locked              bool          `json:"locked"`
+	BlockedByWindow     bool          `json:"blocked_by_window"`
+	LastStateChange     time.Time     `json:"last_state_change"`
+	Ended               bool          `json:"ended"`
 }
 
 type App struct {
 	cfg    trayconfig.Config
 	client *http.Client
 
-	activeItem   *systray.MenuItem
-	inactiveItem *systray.MenuItem
-	stateItem    *systray.MenuItem
-	errorItem    *systray.MenuItem
+	activeItem       *systray.MenuItem
+	inactiveItem     *systray.MenuItem
+	stateItem        *systray.MenuItem
+	activityTypeItem *systray.MenuItem
+	errorItem        *systray.MenuItem
 
 	refreshItem     *systray.MenuItem
 	startItem       *systray.MenuItem
@@ -80,6 +82,8 @@ func (a *App) onReady() {
 	a.inactiveItem.Disable()
 	a.stateItem = systray.AddMenuItem("Состояние: ...", "")
 	a.stateItem.Disable()
+	a.activityTypeItem = systray.AddMenuItem("Тип активности: ...", "")
+	a.activityTypeItem.Disable()
 	a.errorItem = systray.AddMenuItem("", "")
 	a.errorItem.Disable()
 	a.errorItem.Hide()
@@ -162,6 +166,7 @@ func (a *App) refresh() {
 	a.activeItem.SetTitle("Активность: " + formatDuration(status.TotalActive))
 	a.inactiveItem.SetTitle("Неактивность: " + formatDuration(status.TotalInactive))
 	a.stateItem.SetTitle("Состояние: " + stateText(status))
+	a.activityTypeItem.SetTitle("Тип активности: " + emptyFallback(status.CurrentActivityType, "-"))
 	a.updateMenuAvailability(status)
 	a.updateIcon(status)
 }
@@ -173,6 +178,7 @@ func (a *App) renderError(err error) {
 	a.activeItem.SetTitle("Активность: недоступно")
 	a.inactiveItem.SetTitle("Неактивность: недоступно")
 	a.stateItem.SetTitle("Состояние: ошибка API")
+	a.activityTypeItem.SetTitle("Тип активности: недоступно")
 	a.continueDayItem.Disable()
 }
 
@@ -333,4 +339,11 @@ func formatDuration(d time.Duration) string {
 	}
 
 	return strings.Join(parts, " ")
+}
+
+func emptyFallback(v, fallback string) string {
+	if strings.TrimSpace(v) == "" {
+		return fallback
+	}
+	return v
 }

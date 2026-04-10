@@ -253,6 +253,7 @@ const webUIHTML = `<!doctype html>
         </div>
 
         <div class="details">
+          <div class="details-row"><div class="details-key">Тип активности</div><div id="current-activity-type">-</div></div>
           <div class="details-row"><div class="details-key">Тип неактивности</div><div id="current-inactivity-type">-</div></div>
           <div class="details-row"><div class="details-key">Активное окно</div><div id="window-title">-</div></div>
           <div class="details-row"><div class="details-key">GTK App ID</div><div id="window-gtk">-</div></div>
@@ -278,6 +279,14 @@ const webUIHTML = `<!doctype html>
           <button class="danger" id="btn-end">Завершить день</button>
         </div>
         <div class="row">
+          <select id="activity-type-select"></select>
+          <button class="ghost" id="btn-set-activity-type">Установить тип активности</button>
+        </div>
+        <div class="row">
+          <input id="new-activity-type" placeholder="Новый тип активности, например: проектирование">
+          <button class="ghost" id="btn-add-activity-type">Добавить тип активности</button>
+        </div>
+        <div class="row">
           <select id="inactivity-type-select"></select>
           <button class="ghost" id="btn-set-inactivity-type">Установить тип</button>
         </div>
@@ -299,7 +308,7 @@ const webUIHTML = `<!doctype html>
   </div>
 
   <script>
-    const state = { status: null, inactivityTypes: [] };
+    const state = { status: null, activityTypes: [], inactivityTypes: [] };
     const themeKey = "wat-webui-theme";
 
     const el = (id) => document.getElementById(id);
@@ -346,6 +355,7 @@ const webUIHTML = `<!doctype html>
       setText("active-total", formatDurationFromNs(s.total_active));
       setText("inactive-total", formatDurationFromNs(s.total_inactive));
       setText("added-total", formatDurationFromNs(s.total_added));
+      setText("current-activity-type", s.current_activity_type || "-");
       setText("current-inactivity-type", s.current_inactivity_type || "-");
       setText("window-title", s.window?.title || "-");
       setText("window-gtk", s.window?.gtk_application_id || "-");
@@ -362,7 +372,23 @@ const webUIHTML = `<!doctype html>
       el("btn-sub-20").disabled = !s.started || s.ended;
       el("btn-sub-30").disabled = !s.started || s.ended;
       el("btn-continue-day").disabled = !(s.can_continue_day && (!s.started || s.ended));
+      el("btn-set-activity-type").disabled = !s.started || s.ended;
       el("btn-set-inactivity-type").disabled = !(s.started && !s.ended && s.paused_manually);
+    }
+
+    function renderActivityTypes(payload) {
+      state.activityTypes = payload.types || [];
+      const select = el("activity-type-select");
+      select.innerHTML = "";
+      state.activityTypes.forEach((name) => {
+        const option = document.createElement("option");
+        option.value = name;
+        option.textContent = name;
+        if (name === payload.current_type) {
+          option.selected = true;
+        }
+        select.appendChild(option);
+      });
     }
 
     function renderInactivityTypes(payload) {
@@ -427,13 +453,15 @@ const webUIHTML = `<!doctype html>
 
     async function refreshAll(showMessage = false) {
       try {
-        const [status, history] = await Promise.all([
+        const [status, history, activityTypes, inactivityTypes] = await Promise.all([
           api("/status"),
           api("/history"),
+          api("/activity-types"),
+          api("/inactivity-types"),
         ]);
-        const inactivityTypes = await api("/inactivity-types");
         renderStatus(status);
         renderHistory(history);
+        renderActivityTypes(activityTypes);
         renderInactivityTypes(inactivityTypes);
         if (showMessage) {
           setMessage("Данные обновлены");
@@ -474,6 +502,37 @@ const webUIHTML = `<!doctype html>
       }
     }
 
+    async function addActivityType() {
+      const input = el("new-activity-type");
+      const name = input.value.trim();
+      if (!name) {
+        setMessage("Введите название типа активности", true);
+        return;
+      }
+      try {
+        await api("/activity-types/add?name=" + encodeURIComponent(name), { method: "POST" });
+        input.value = "";
+        await refreshAll();
+      } catch (err) {
+        setMessage(err.message || String(err), true);
+      }
+    }
+
+    async function setCurrentActivityType() {
+      const select = el("activity-type-select");
+      const name = select.value;
+      if (!name) {
+        setMessage("Выберите тип активности", true);
+        return;
+      }
+      try {
+        await api("/activity-type/set?name=" + encodeURIComponent(name), { method: "POST" });
+        await refreshAll();
+      } catch (err) {
+        setMessage(err.message || String(err), true);
+      }
+    }
+
     async function setCurrentInactivityType() {
       const select = el("inactivity-type-select");
       const name = select.value;
@@ -502,6 +561,8 @@ const webUIHTML = `<!doctype html>
     el("btn-sub-30").onclick = () => doAction("/subtract?minutes=30", "GET");
     el("btn-end").onclick = () => doAction("/end");
     el("btn-theme").onclick = toggleTheme;
+    el("btn-add-activity-type").onclick = addActivityType;
+    el("btn-set-activity-type").onclick = setCurrentActivityType;
     el("btn-add-inactivity-type").onclick = addInactivityType;
     el("btn-set-inactivity-type").onclick = setCurrentInactivityType;
 

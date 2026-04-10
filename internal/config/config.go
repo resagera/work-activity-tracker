@@ -56,6 +56,8 @@ type Config struct {
 	AutoStartDay               bool     `json:"auto_start_day"`
 	EnableDesktopNotifications bool     `json:"enable_desktop_notifications"`
 	HistoryFile                string   `json:"history_file"`
+	ActivityTypesFile          string   `json:"activity_types_file"`
+	DefaultActivityType        string   `json:"default_activity_type"`
 	InactivityTypesFile        string   `json:"inactivity_types_file"`
 	LogFile                    string   `json:"log_file"`
 	IdleWarnAfter              Duration `json:"idle_warn_after"`
@@ -70,6 +72,8 @@ func Default() Config {
 		AutoStartDay:               true,
 		EnableDesktopNotifications: true,
 		HistoryFile:                "session-history.json",
+		ActivityTypesFile:          "activity-types.json",
+		DefaultActivityType:        "работа",
 		InactivityTypesFile:        "inactivity-types.json",
 		IdleWarnAfter:              Duration{Duration: DefaultIdleWarnAfter},
 		StopAfterWarn:              Duration{Duration: DefaultStopAfterWarn},
@@ -166,6 +170,8 @@ func OverrideFromFlags(cfg *Config, args []string) error {
 		httpPort                   = fs.Int("http-port", 0, "http api port, 0 disables api")
 		enableDesktopNotifications = fs.Bool("enable-desktop-notifications", true, "enable desktop notifications")
 		historyFile                = fs.String("history-file", "", "path to session history json file")
+		activityTypesFile          = fs.String("activity-types-file", "", "path to activity types json file")
+		defaultActivityType        = fs.String("default-activity-type", "", "default activity type for new day")
 		inactivityTypesFile        = fs.String("inactivity-types-file", "", "path to inactivity types json file")
 		logFile                    = fs.String("log-file", "", "path to optional log file")
 		idleWarn                   = fs.Duration("idle-warn-after", 0, "time without activity before warning")
@@ -198,6 +204,12 @@ func OverrideFromFlags(cfg *Config, args []string) error {
 	cfg.EnableDesktopNotifications = *enableDesktopNotifications
 	if *historyFile != "" {
 		cfg.HistoryFile = *historyFile
+	}
+	if *activityTypesFile != "" {
+		cfg.ActivityTypesFile = *activityTypesFile
+	}
+	if *defaultActivityType != "" {
+		cfg.DefaultActivityType = *defaultActivityType
 	}
 	if *inactivityTypesFile != "" {
 		cfg.InactivityTypesFile = *inactivityTypesFile
