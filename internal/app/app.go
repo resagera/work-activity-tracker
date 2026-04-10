@@ -26,9 +26,9 @@ type App struct {
 	tracker               *tracker.Tracker
 	history               *history.Store
 	activityTypes         *activity.Store
-	customActivityTypes   []string
+	customActivityTypes   []activity.TypeDefinition
 	inactivityTypes       *inactivity.Store
-	customInactivityTypes []string
+	customInactivityTypes []inactivity.TypeDefinition
 
 	continuedFromHistory bool
 }
@@ -100,7 +100,7 @@ func (a *App) runHTTP(ctx context.Context) {
 	})
 
 	mux.HandleFunc("/status", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, http.StatusOK, a.tracker.Summary())
+		writeJSON(w, http.StatusOK, a.Summary())
 	})
 
 	mux.HandleFunc("/history", func(w http.ResponseWriter, r *http.Request) {
@@ -114,15 +114,17 @@ func (a *App) runHTTP(ctx context.Context) {
 
 	mux.HandleFunc("/activity-types", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{
-			"types":        a.AllActivityTypes(),
-			"default_type": activity.DefaultType(a.cfg.DefaultActivityType),
-			"current_type": a.tracker.Summary().CurrentActivityType,
+			"types":         a.ActivityTypeDefinitions(),
+			"default_type":  activity.DefaultType(a.cfg.DefaultActivityType),
+			"current_type":  a.Summary().CurrentActivityType,
+			"current_color": a.Summary().CurrentActivityColor,
 		})
 	})
 
 	mux.HandleFunc("/activity-types/add", func(w http.ResponseWriter, r *http.Request) {
 		name := r.URL.Query().Get("name")
-		types, err := a.AddActivityType(name)
+		color := r.URL.Query().Get("color")
+		types, err := a.AddActivityTypeWithColor(name, color)
 		if err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
@@ -136,19 +138,32 @@ func (a *App) runHTTP(ctx context.Context) {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
 		}
-		writeJSON(w, http.StatusOK, a.tracker.Summary())
+		writeJSON(w, http.StatusOK, a.Summary())
+	})
+
+	mux.HandleFunc("/activity-type/color", func(w http.ResponseWriter, r *http.Request) {
+		name := r.URL.Query().Get("name")
+		color := r.URL.Query().Get("color")
+		types, err := a.SetActivityTypeColor(name, color)
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"types": types})
 	})
 
 	mux.HandleFunc("/inactivity-types", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{
-			"types":        a.AllInactivityTypes(),
-			"current_type": a.tracker.Summary().CurrentInactivityType,
+			"types":         a.InactivityTypeDefinitions(),
+			"current_type":  a.Summary().CurrentInactivityType,
+			"current_color": a.Summary().CurrentInactivityColor,
 		})
 	})
 
 	mux.HandleFunc("/inactivity-types/add", func(w http.ResponseWriter, r *http.Request) {
 		name := r.URL.Query().Get("name")
-		types, err := a.AddInactivityType(name)
+		color := r.URL.Query().Get("color")
+		types, err := a.AddInactivityTypeWithColor(name, color)
 		if err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
@@ -162,7 +177,18 @@ func (a *App) runHTTP(ctx context.Context) {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
 		}
-		writeJSON(w, http.StatusOK, a.tracker.Summary())
+		writeJSON(w, http.StatusOK, a.Summary())
+	})
+
+	mux.HandleFunc("/inactivity-type/color", func(w http.ResponseWriter, r *http.Request) {
+		name := r.URL.Query().Get("name")
+		color := r.URL.Query().Get("color")
+		types, err := a.SetInactivityTypeColor(name, color)
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"types": types})
 	})
 
 	mux.HandleFunc("/add", func(w http.ResponseWriter, r *http.Request) {
@@ -179,7 +205,7 @@ func (a *App) runHTTP(ctx context.Context) {
 		}
 
 		a.AddTime(time.Duration(minutes)*time.Minute, "http api")
-		writeJSON(w, http.StatusOK, a.tracker.Summary())
+		writeJSON(w, http.StatusOK, a.Summary())
 	})
 
 	mux.HandleFunc("/subtract", func(w http.ResponseWriter, r *http.Request) {
@@ -196,22 +222,22 @@ func (a *App) runHTTP(ctx context.Context) {
 		}
 
 		a.MoveActiveToInactive(time.Duration(minutes)*time.Minute, "http api")
-		writeJSON(w, http.StatusOK, a.tracker.Summary())
+		writeJSON(w, http.StatusOK, a.Summary())
 	})
 
 	mux.HandleFunc("/pause", func(w http.ResponseWriter, r *http.Request) {
 		a.SetManualPause(true)
-		writeJSON(w, http.StatusOK, a.tracker.Summary())
+		writeJSON(w, http.StatusOK, a.Summary())
 	})
 
 	mux.HandleFunc("/start", func(w http.ResponseWriter, r *http.Request) {
-		s := a.tracker.Summary()
+		s := a.Summary()
 		if !s.Started || s.Ended {
 			writeJSON(w, http.StatusOK, a.StartNewDay("http api"))
 			return
 		}
 		a.SetManualPause(false)
-		writeJSON(w, http.StatusOK, a.tracker.Summary())
+		writeJSON(w, http.StatusOK, a.Summary())
 	})
 
 	mux.HandleFunc("/new-day", func(w http.ResponseWriter, r *http.Request) {
@@ -354,7 +380,10 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 }
 
 func (a *App) Summary() tracker.SessionSummary {
-	return a.tracker.Summary()
+	s := a.tracker.Summary()
+	s.CurrentActivityColor = activity.FindColor(a.ActivityTypeDefinitions(), s.CurrentActivityType)
+	s.CurrentInactivityColor = inactivity.FindColor(a.InactivityTypeDefinitions(), s.CurrentInactivityType)
+	return s
 }
 
 func (a *App) AddTime(d time.Duration, source string) {
@@ -366,20 +395,53 @@ func (a *App) MoveActiveToInactive(d time.Duration, source string) {
 }
 
 func (a *App) AllInactivityTypes() []string {
-	return inactivity.All(a.customInactivityTypes)
+	return inactivity.Names(a.InactivityTypeDefinitions())
 }
 
 func (a *App) AllActivityTypes() []string {
-	items := append([]string{}, a.customActivityTypes...)
+	items := append([]activity.TypeDefinition{}, a.customActivityTypes...)
 	defaultType := activity.DefaultType(a.cfg.DefaultActivityType)
-	if !contains(items, defaultType) {
-		items = append(items, defaultType)
+	if !contains(activity.Names(items), defaultType) {
+		items = append(items, activity.TypeDefinition{Name: defaultType})
 	}
-	return activity.All(items)
+	return activity.Names(activity.Merge(items))
 }
 
 func (a *App) AddActivityType(name string) ([]string, error) {
-	types, err := a.activityTypes.Add(name)
+	types, err := a.activityTypes.Add(name, "")
+	if err != nil {
+		return nil, err
+	}
+	custom, err := a.activityTypes.LoadAll()
+	if err == nil {
+		a.customActivityTypes = custom
+	}
+	return activity.Names(types), nil
+}
+
+func (a *App) AddActivityTypeWithColor(name, color string) ([]activity.TypeDefinition, error) {
+	types, err := a.activityTypes.Add(name, color)
+	if err != nil {
+		return nil, err
+	}
+	custom, err := a.activityTypes.LoadAll()
+	if err == nil {
+		a.customActivityTypes = custom
+	}
+	return types, nil
+}
+
+func (a *App) ActivityTypeDefinitions() []activity.TypeDefinition {
+	items := append([]activity.TypeDefinition{}, a.customActivityTypes...)
+	defaultType := activity.DefaultType(a.cfg.DefaultActivityType)
+	if !contains(activity.Names(items), defaultType) {
+		items = append(items, activity.TypeDefinition{Name: defaultType})
+	}
+	return activity.Merge(items)
+}
+
+func (a *App) SetActivityTypeColor(name, color string) ([]activity.TypeDefinition, error) {
+	types, err := a.activityTypes.SetColor(name, color)
 	if err != nil {
 		return nil, err
 	}
@@ -402,7 +464,35 @@ func (a *App) SetCurrentActivityType(name string) error {
 }
 
 func (a *App) AddInactivityType(name string) ([]string, error) {
-	types, err := a.inactivityTypes.Add(name)
+	types, err := a.inactivityTypes.Add(name, "")
+	if err != nil {
+		return nil, err
+	}
+	custom, err := a.inactivityTypes.LoadAll()
+	if err == nil {
+		a.customInactivityTypes = custom
+	}
+	return inactivity.Names(types), nil
+}
+
+func (a *App) AddInactivityTypeWithColor(name, color string) ([]inactivity.TypeDefinition, error) {
+	types, err := a.inactivityTypes.Add(name, color)
+	if err != nil {
+		return nil, err
+	}
+	custom, err := a.inactivityTypes.LoadAll()
+	if err == nil {
+		a.customInactivityTypes = custom
+	}
+	return types, nil
+}
+
+func (a *App) InactivityTypeDefinitions() []inactivity.TypeDefinition {
+	return inactivity.Merge(a.customInactivityTypes)
+}
+
+func (a *App) SetInactivityTypeColor(name, color string) ([]inactivity.TypeDefinition, error) {
+	types, err := a.inactivityTypes.SetColor(name, color)
 	if err != nil {
 		return nil, err
 	}
@@ -431,12 +521,14 @@ func (a *App) SetManualPause(paused bool) {
 func (a *App) StartNewDay(reason string) tracker.SessionSummary {
 	a.continuedFromHistory = false
 	a.tracker.SetResumeRecord(nil)
-	return a.tracker.StartNewDay(reason)
+	a.tracker.StartNewDay(reason)
+	return a.Summary()
 }
 
 func (a *App) ContinueDay(reason string) tracker.SessionSummary {
 	a.continuedFromHistory = true
-	return a.tracker.ContinueDay(reason)
+	a.tracker.ContinueDay(reason)
+	return a.Summary()
 }
 
 func (a *App) EndSession(reason string) tracker.SessionSummary {
@@ -459,9 +551,9 @@ func (a *App) EndSession(reason string) tracker.SessionSummary {
 		} else {
 			a.tracker.SetResumeRecord(nil)
 		}
-		return a.tracker.Summary()
+		return a.Summary()
 	}
-	return summary
+	return a.Summary()
 }
 
 func (a *App) loadResumeCandidate() error {

@@ -96,6 +96,15 @@ const webUIHTML = `<!doctype html>
       background: color-mix(in srgb, var(--card) 70%, #fff 30%);
       font-size: 13px;
     }
+    .swatch {
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+      display: inline-block;
+      border: 1px solid color-mix(in srgb, var(--ink) 20%, transparent);
+      margin-right: 8px;
+      vertical-align: middle;
+    }
     .dot {
       width: 9px;
       height: 9px;
@@ -283,7 +292,12 @@ const webUIHTML = `<!doctype html>
           <button class="ghost" id="btn-set-activity-type">Установить тип активности</button>
         </div>
         <div class="row">
+          <input id="activity-type-color" placeholder="#0d7a5f">
+          <button class="ghost" id="btn-set-activity-color">Установить цвет активности</button>
+        </div>
+        <div class="row">
           <input id="new-activity-type" placeholder="Новый тип активности, например: проектирование">
+          <input id="new-activity-color" placeholder="#4f46e5">
           <button class="ghost" id="btn-add-activity-type">Добавить тип активности</button>
         </div>
         <div class="row">
@@ -291,7 +305,12 @@ const webUIHTML = `<!doctype html>
           <button class="ghost" id="btn-set-inactivity-type">Установить тип</button>
         </div>
         <div class="row">
+          <input id="inactivity-type-color" placeholder="#c96c2b">
+          <button class="ghost" id="btn-set-inactivity-color">Установить цвет неактивности</button>
+        </div>
+        <div class="row">
           <input id="new-inactivity-type" placeholder="Новый тип неактивности, например: перекус">
+          <input id="new-inactivity-color" placeholder="#ef4444">
           <button class="ghost" id="btn-add-inactivity-type">Добавить тип</button>
         </div>
         <div class="message" id="message"></div>
@@ -313,6 +332,15 @@ const webUIHTML = `<!doctype html>
 
     const el = (id) => document.getElementById(id);
     const setText = (id, value) => { el(id).textContent = value ?? "-"; };
+    function setTypeText(id, name, color) {
+      const node = el(id);
+      if (!name) {
+        node.textContent = "-";
+        return;
+      }
+      const swatch = color ? '<span class="swatch" style="background:' + color + '"></span>' : "";
+      node.innerHTML = swatch + name;
+    }
 
     function formatDurationFromNs(ns) {
       if (!ns || ns < 0) return "0s";
@@ -355,8 +383,8 @@ const webUIHTML = `<!doctype html>
       setText("active-total", formatDurationFromNs(s.total_active));
       setText("inactive-total", formatDurationFromNs(s.total_inactive));
       setText("added-total", formatDurationFromNs(s.total_added));
-      setText("current-activity-type", s.current_activity_type || "-");
-      setText("current-inactivity-type", s.current_inactivity_type || "-");
+      setTypeText("current-activity-type", s.current_activity_type, s.current_activity_color);
+      setTypeText("current-inactivity-type", s.current_inactivity_type, s.current_inactivity_color);
       setText("window-title", s.window?.title || "-");
       setText("window-gtk", s.window?.gtk_application_id || "-");
       setText("window-kde", s.window?.kde_net_wm_desktop_file || "-");
@@ -373,37 +401,43 @@ const webUIHTML = `<!doctype html>
       el("btn-sub-30").disabled = !s.started || s.ended;
       el("btn-continue-day").disabled = !(s.can_continue_day && (!s.started || s.ended));
       el("btn-set-activity-type").disabled = !s.started || s.ended;
+      el("btn-set-activity-color").disabled = !el("activity-type-select").value;
       el("btn-set-inactivity-type").disabled = !(s.started && !s.ended && s.paused_manually);
+      el("btn-set-inactivity-color").disabled = !el("inactivity-type-select").value;
     }
 
     function renderActivityTypes(payload) {
       state.activityTypes = payload.types || [];
       const select = el("activity-type-select");
       select.innerHTML = "";
-      state.activityTypes.forEach((name) => {
+      state.activityTypes.forEach((item) => {
         const option = document.createElement("option");
-        option.value = name;
-        option.textContent = name;
-        if (name === payload.current_type) {
+        option.value = item.name;
+        option.textContent = item.color ? item.name + " [" + item.color + "]" : item.name;
+        option.dataset.color = item.color || "";
+        if (item.name === payload.current_type) {
           option.selected = true;
         }
         select.appendChild(option);
       });
+      el("activity-type-color").value = payload.current_color || select.selectedOptions[0]?.dataset.color || "";
     }
 
     function renderInactivityTypes(payload) {
       state.inactivityTypes = payload.types || [];
       const select = el("inactivity-type-select");
       select.innerHTML = "";
-      state.inactivityTypes.forEach((name) => {
+      state.inactivityTypes.forEach((item) => {
         const option = document.createElement("option");
-        option.value = name;
-        option.textContent = name;
-        if (name === payload.current_type) {
+        option.value = item.name;
+        option.textContent = item.color ? item.name + " [" + item.color + "]" : item.name;
+        option.dataset.color = item.color || "";
+        if (item.name === payload.current_type) {
           option.selected = true;
         }
         select.appendChild(option);
       });
+      el("inactivity-type-color").value = payload.current_color || select.selectedOptions[0]?.dataset.color || "";
     }
 
     function applyTheme(theme) {
@@ -489,13 +523,15 @@ const webUIHTML = `<!doctype html>
     async function addInactivityType() {
       const input = el("new-inactivity-type");
       const name = input.value.trim();
+      const color = el("new-inactivity-color").value.trim();
       if (!name) {
         setMessage("Введите название типа", true);
         return;
       }
       try {
-        await api("/inactivity-types/add?name=" + encodeURIComponent(name), { method: "POST" });
+        await api("/inactivity-types/add?name=" + encodeURIComponent(name) + "&color=" + encodeURIComponent(color), { method: "POST" });
         input.value = "";
+        el("new-inactivity-color").value = "";
         await refreshAll();
       } catch (err) {
         setMessage(err.message || String(err), true);
@@ -505,13 +541,15 @@ const webUIHTML = `<!doctype html>
     async function addActivityType() {
       const input = el("new-activity-type");
       const name = input.value.trim();
+      const color = el("new-activity-color").value.trim();
       if (!name) {
         setMessage("Введите название типа активности", true);
         return;
       }
       try {
-        await api("/activity-types/add?name=" + encodeURIComponent(name), { method: "POST" });
+        await api("/activity-types/add?name=" + encodeURIComponent(name) + "&color=" + encodeURIComponent(color), { method: "POST" });
         input.value = "";
+        el("new-activity-color").value = "";
         await refreshAll();
       } catch (err) {
         setMessage(err.message || String(err), true);
@@ -548,6 +586,36 @@ const webUIHTML = `<!doctype html>
       }
     }
 
+    async function setActivityTypeColor() {
+      const name = el("activity-type-select").value;
+      const color = el("activity-type-color").value.trim();
+      if (!name || !color) {
+        setMessage("Выберите тип активности и цвет", true);
+        return;
+      }
+      try {
+        await api("/activity-type/color?name=" + encodeURIComponent(name) + "&color=" + encodeURIComponent(color), { method: "POST" });
+        await refreshAll();
+      } catch (err) {
+        setMessage(err.message || String(err), true);
+      }
+    }
+
+    async function setInactivityTypeColor() {
+      const name = el("inactivity-type-select").value;
+      const color = el("inactivity-type-color").value.trim();
+      if (!name || !color) {
+        setMessage("Выберите тип неактивности и цвет", true);
+        return;
+      }
+      try {
+        await api("/inactivity-type/color?name=" + encodeURIComponent(name) + "&color=" + encodeURIComponent(color), { method: "POST" });
+        await refreshAll();
+      } catch (err) {
+        setMessage(err.message || String(err), true);
+      }
+    }
+
     el("btn-refresh").onclick = () => refreshAll(true);
     el("btn-start").onclick = () => doAction("/start");
     el("btn-pause").onclick = () => doAction("/pause");
@@ -563,8 +631,16 @@ const webUIHTML = `<!doctype html>
     el("btn-theme").onclick = toggleTheme;
     el("btn-add-activity-type").onclick = addActivityType;
     el("btn-set-activity-type").onclick = setCurrentActivityType;
+    el("btn-set-activity-color").onclick = setActivityTypeColor;
     el("btn-add-inactivity-type").onclick = addInactivityType;
     el("btn-set-inactivity-type").onclick = setCurrentInactivityType;
+    el("btn-set-inactivity-color").onclick = setInactivityTypeColor;
+    el("activity-type-select").onchange = () => {
+      el("activity-type-color").value = el("activity-type-select").selectedOptions[0]?.dataset.color || "";
+    };
+    el("inactivity-type-select").onchange = () => {
+      el("inactivity-type-color").value = el("inactivity-type-select").selectedOptions[0]?.dataset.color || "";
+    };
 
     applyTheme(localStorage.getItem(themeKey) || "light");
     refreshAll();

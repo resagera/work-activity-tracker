@@ -20,14 +20,16 @@ type Notifier interface {
 }
 
 type SessionSummary struct {
-	Started               bool          `json:"started"`
-	CanContinueDay        bool          `json:"can_continue_day"`
-	SessionStartedAt      time.Time     `json:"session_started_at"`
-	TotalActive           time.Duration `json:"total_active"`
-	TotalInactive         time.Duration `json:"total_inactive"`
-	TotalAdded            time.Duration `json:"total_added"`
-	CurrentActivityType   string        `json:"current_activity_type"`
-	CurrentInactivityType string        `json:"current_inactivity_type"`
+	Started                bool          `json:"started"`
+	CanContinueDay         bool          `json:"can_continue_day"`
+	SessionStartedAt       time.Time     `json:"session_started_at"`
+	TotalActive            time.Duration `json:"total_active"`
+	TotalInactive          time.Duration `json:"total_inactive"`
+	TotalAdded             time.Duration `json:"total_added"`
+	CurrentActivityType    string        `json:"current_activity_type"`
+	CurrentActivityColor   string        `json:"current_activity_color"`
+	CurrentInactivityType  string        `json:"current_inactivity_type"`
+	CurrentInactivityColor string        `json:"current_inactivity_color"`
 
 	Running         bool      `json:"running"`
 	PausedManually  bool      `json:"paused_manually"`
@@ -756,14 +758,16 @@ func (t *Tracker) currentInactiveLocked(now time.Time) time.Duration {
 
 func (t *Tracker) summaryLocked(now time.Time) SessionSummary {
 	return SessionSummary{
-		Started:               t.started,
-		CanContinueDay:        t.resumeRecord != nil,
-		SessionStartedAt:      t.sessionStartedAt,
-		TotalActive:           t.currentActiveLocked(now),
-		TotalInactive:         t.currentInactiveLocked(now),
-		TotalAdded:            t.manualAdded,
-		CurrentActivityType:   t.currentActivityTypeLocked(),
-		CurrentInactivityType: t.currentInactivityTypeLocked(),
+		Started:                t.started,
+		CanContinueDay:         t.resumeRecord != nil,
+		SessionStartedAt:       t.sessionStartedAt,
+		TotalActive:            t.currentActiveLocked(now),
+		TotalInactive:          t.currentInactiveLocked(now),
+		TotalAdded:             t.manualAdded,
+		CurrentActivityType:    t.currentActivityTypeLocked(),
+		CurrentActivityColor:   t.currentActivityColorLocked(),
+		CurrentInactivityType:  t.currentInactivityTypeLocked(),
+		CurrentInactivityColor: t.currentInactivityColorLocked(),
 
 		Running:         t.running,
 		PausedManually:  t.pausedManually,
@@ -783,6 +787,10 @@ func (t *Tracker) currentActivityTypeLocked() string {
 	return EmptyFallback(t.currentActivityType, activity.DefaultType(t.cfg.DefaultActivityType))
 }
 
+func (t *Tracker) currentActivityColorLocked() string {
+	return activity.FindColor(activity.Merge(nil), t.currentActivityTypeLocked())
+}
+
 func (t *Tracker) currentInactivityTypeLocked() string {
 	switch {
 	case !t.started || t.running || t.ended:
@@ -796,6 +804,10 @@ func (t *Tracker) currentInactivityTypeLocked() string {
 	default:
 		return inactivity.TypeIdle
 	}
+}
+
+func (t *Tracker) currentInactivityColorLocked() string {
+	return inactivity.FindColor(inactivity.Merge(nil), t.currentInactivityTypeLocked())
 }
 
 func (t *Tracker) notifySoonPause(idle time.Duration) {
