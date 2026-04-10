@@ -73,6 +73,8 @@ type Tracker struct {
 	resumeRecord        *history.SessionRecord
 	currentActivityType string
 	manualInactiveType  string
+	periods             []history.SessionPeriod
+	currentPeriod       *history.SessionPeriod
 }
 
 func New(cfg config.Config, notifyFn func(title, body string) error) *Tracker {
@@ -170,6 +172,8 @@ func (t *Tracker) StartNewDay(reason string) SessionSummary {
 	t.resumeRecord = nil
 	t.currentActivityType = activity.DefaultType(t.cfg.DefaultActivityType)
 	t.manualInactiveType = ""
+	t.periods = nil
+	t.currentPeriod = nil
 
 	if !t.locked && !t.blockedByWindow {
 		t.running = true
@@ -177,6 +181,7 @@ func (t *Tracker) StartNewDay(reason string) SessionSummary {
 	} else {
 		t.ensureInactiveStartedLocked(now)
 	}
+	t.syncPeriodLocked(now)
 
 	msg = fmt.Sprintf(
 		"📅 Начат новый день (%s). Состояние: %s",
@@ -225,6 +230,8 @@ func (t *Tracker) ContinueDay(reason string) SessionSummary {
 	t.resumeRecord = nil
 	t.currentActivityType = activity.DefaultType(t.cfg.DefaultActivityType)
 	t.manualInactiveType = ""
+	t.periods = append([]history.SessionPeriod{}, record.Periods...)
+	t.currentPeriod = nil
 
 	if !t.locked && !t.blockedByWindow {
 		t.running = true
@@ -232,6 +239,7 @@ func (t *Tracker) ContinueDay(reason string) SessionSummary {
 	} else {
 		t.ensureInactiveStartedLocked(now)
 	}
+	t.syncPeriodLocked(now)
 
 	msg = fmt.Sprintf(
 		"🔄 Продолжен день (%s). Активность: %s, неактивность: %s",
@@ -269,6 +277,7 @@ func (t *Tracker) StopWork(reason string) {
 	t.ensureInactiveStartedLocked(now)
 	t.lastStateAt = now
 	t.warned = false
+	t.syncPeriodLocked(now)
 
 	msg = fmt.Sprintf(
 		"⏸ Подсчет рабочего времени остановлен (%s). Активность: %s, неактивность: %s",
@@ -321,6 +330,7 @@ func (t *Tracker) SetManualPause(paused bool) {
 
 	t.lastStateAt = now
 	t.warned = false
+	t.syncPeriodLocked(now)
 	notifier = t.notifier
 	t.mu.Unlock()
 
@@ -350,6 +360,7 @@ func (t *Tracker) SetCurrentInactivityType(name string) error {
 	}
 	t.manualInactiveType = name
 	t.lastStateAt = time.Now()
+	t.syncPeriodLocked(t.lastStateAt)
 	notifier = t.notifier
 	t.mu.Unlock()
 
@@ -377,6 +388,7 @@ func (t *Tracker) SetCurrentActivityType(name string) error {
 	}
 	t.currentActivityType = name
 	t.lastStateAt = time.Now()
+	t.syncPeriodLocked(t.lastStateAt)
 	notifier = t.notifier
 	t.mu.Unlock()
 
@@ -484,6 +496,7 @@ func (t *Tracker) EndSession(reason string) SessionSummary {
 		t.pausedManually = false
 		t.ended = true
 		t.lastStateAt = now
+		t.syncPeriodLocked(now)
 
 		msg = fmt.Sprintf(
 			"🏁 Сессия завершена (%s). Активность: %s, неактивность: %s",
@@ -505,6 +518,15 @@ func (t *Tracker) EndSession(reason string) SessionSummary {
 	}
 
 	return summary
+}
+
+func (t *Tracker) HistoryPeriods() []history.SessionPeriod {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	now := time.Now()
+	t.syncPeriodLocked(now)
+	out := append([]history.SessionPeriod{}, t.periods...)
+	return out
 }
 
 func (t *Tracker) HandleActivity(idle time.Duration) {
@@ -629,6 +651,7 @@ func (t *Tracker) SetActiveWindowInfo(info platform.WindowInfo) {
 			now := time.Now()
 			t.ensureInactiveStartedLocked(now)
 			t.lastStateAt = now
+			t.syncPeriodLocked(now)
 		}
 	}
 
@@ -643,6 +666,7 @@ func (t *Tracker) SetActiveWindowInfo(info platform.WindowInfo) {
 	if !info.BlockedByRule && !prevBlocked && (info.WindowID != prevID || info.Title != prevTitle) {
 		t.lastStateAt = time.Now()
 	}
+	t.syncPeriodLocked(time.Now())
 
 	t.mu.Unlock()
 
@@ -724,6 +748,44 @@ func (t *Tracker) ensureInactiveStartedLocked(now time.Time) {
 		return
 	}
 	t.inactiveStartedAt = now
+}
+
+func (t *Tracker) desiredPeriodLocked() (kind string, periodType string, ok bool) {
+	switch {
+	case !t.started || t.ended:
+		return "", "", false
+	case t.running:
+		return "activity", t.currentActivityTypeLocked(), true
+	default:
+		return "inactivity", t.currentInactivityTypeLocked(), true
+	}
+}
+
+func (t *Tracker) syncPeriodLocked(now time.Time) {
+	kind, periodType, ok := t.desiredPeriodLocked()
+	if !ok {
+		if t.currentPeriod != nil {
+			t.currentPeriod.EndedAt = now
+			t.periods = append(t.periods, *t.currentPeriod)
+			t.currentPeriod = nil
+		}
+		return
+	}
+
+	if t.currentPeriod != nil && t.currentPeriod.Kind == kind && t.currentPeriod.Type == periodType {
+		return
+	}
+
+	if t.currentPeriod != nil {
+		t.currentPeriod.EndedAt = now
+		t.periods = append(t.periods, *t.currentPeriod)
+	}
+
+	t.currentPeriod = &history.SessionPeriod{
+		Kind:      kind,
+		Type:      periodType,
+		StartedAt: now,
+	}
 }
 
 func (t *Tracker) closeInactiveLocked(now time.Time) {

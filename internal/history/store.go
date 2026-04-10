@@ -9,12 +9,23 @@ import (
 	"time"
 )
 
+type SessionPeriod struct {
+	Kind      string    `json:"kind"`
+	Type      string    `json:"type"`
+	Color     string    `json:"color"`
+	StartedAt time.Time `json:"started_at"`
+	EndedAt   time.Time `json:"ended_at"`
+}
+
 type SessionRecord struct {
-	SessionStartedAt time.Time `json:"session_started_at"`
-	SessionEndedAt   time.Time `json:"session_ended_at"`
-	TotalActive      int64     `json:"total_active"`
-	TotalInactive    int64     `json:"total_inactive"`
-	TotalAdded       int64     `json:"total_added"`
+	Version          int             `json:"version,omitempty"`
+	SessionStartedAt time.Time       `json:"session_started_at"`
+	SessionEndedAt   time.Time       `json:"session_ended_at"`
+	TotalActive      int64           `json:"total_active"`
+	TotalInactive    int64           `json:"total_inactive"`
+	TotalAdded       int64           `json:"total_added"`
+	Periods          []SessionPeriod `json:"periods,omitempty"`
+	Metadata         map[string]any  `json:"metadata,omitempty"`
 }
 
 type Store struct {

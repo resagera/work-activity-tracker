@@ -197,8 +197,18 @@ const webUIHTML = `<!doctype html>
     .history-item {
       border: 1px solid var(--line);
       border-radius: 16px;
-      padding: 14px;
       background: color-mix(in srgb, var(--card) 86%, #fff 14%);
+      overflow: hidden;
+    }
+    .history-toggle {
+      all: unset;
+      display: block;
+      width: 100%;
+      padding: 14px;
+      cursor: pointer;
+    }
+    .history-toggle:hover {
+      background: color-mix(in srgb, var(--card) 70%, #fff 30%);
     }
     .history-top {
       display: flex;
@@ -213,6 +223,29 @@ const webUIHTML = `<!doctype html>
       flex-wrap: wrap;
       gap: 10px;
       font-size: 14px;
+    }
+    .history-periods {
+      border-top: 1px dashed var(--line);
+      padding: 14px;
+      display: grid;
+      gap: 10px;
+    }
+    .period-item {
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 10px 12px;
+      background: color-mix(in srgb, var(--card) 78%, #fff 22%);
+    }
+    .period-head {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 6px;
+      font-size: 13px;
+    }
+    .period-meta {
+      color: var(--muted);
+      font-size: 13px;
     }
     .message {
       margin-top: 10px;
@@ -462,16 +495,44 @@ const webUIHTML = `<!doctype html>
       items.slice().reverse().forEach((item) => {
         const node = document.createElement("div");
         node.className = "history-item";
+        const periods = Array.isArray(item.periods) ? item.periods : [];
+        const periodsHtml = periods.length
+          ? periods.map((period) => {
+              const swatch = period.color ? '<span class="swatch" style="background:' + period.color + '"></span>' : "";
+              return '' +
+                '<div class="period-item">' +
+                  '<div class="period-head">' +
+                    '<strong>' + swatch + period.type + '</strong>' +
+                    '<span>' + (period.kind === "activity" ? "Активность" : "Неактивность") + '</span>' +
+                  '</div>' +
+                  '<div class="period-meta">' +
+                    new Date(period.started_at).toLocaleString() + ' - ' +
+                    new Date(period.ended_at).toLocaleString() +
+                    ' · ' + formatDurationFromNs(new Date(period.ended_at).getTime() * 1e6 - new Date(period.started_at).getTime() * 1e6) +
+                  '</div>' +
+                '</div>';
+            }).join("")
+          : '<div class="period-item">Периоды в этой версии истории отсутствуют.</div>';
+
         node.innerHTML =
-          '<div class="history-top">' +
-            '<span>' + new Date(item.session_started_at).toLocaleString() + '</span>' +
-            '<span>' + new Date(item.session_ended_at).toLocaleString() + '</span>' +
-          '</div>' +
-          '<div class="history-metrics">' +
-            '<strong>Активность: ' + formatDurationFromNs(item.total_active) + '</strong>' +
-            '<span>Неактивность: ' + formatDurationFromNs(item.total_inactive) + '</span>' +
-            '<span>Добавлено: ' + formatDurationFromNs(item.total_added) + '</span>' +
-          '</div>';
+          '<button class="history-toggle" type="button">' +
+            '<div class="history-top">' +
+              '<span>' + new Date(item.session_started_at).toLocaleString() + '</span>' +
+              '<span>' + new Date(item.session_ended_at).toLocaleString() + '</span>' +
+            '</div>' +
+            '<div class="history-metrics">' +
+              '<strong>Активность: ' + formatDurationFromNs(item.total_active) + '</strong>' +
+              '<span>Неактивность: ' + formatDurationFromNs(item.total_inactive) + '</span>' +
+              '<span>Добавлено: ' + formatDurationFromNs(item.total_added) + '</span>' +
+              '<span>Периодов: ' + periods.length + '</span>' +
+            '</div>' +
+          '</button>' +
+          '<div class="history-periods" hidden>' + periodsHtml + '</div>';
+        const toggle = node.querySelector(".history-toggle");
+        const body = node.querySelector(".history-periods");
+        toggle.onclick = () => {
+          body.hidden = !body.hidden;
+        };
         root.appendChild(node);
       });
     }

@@ -536,11 +536,14 @@ func (a *App) EndSession(reason string) tracker.SessionSummary {
 	summary := a.tracker.EndSession(reason)
 	if before.Started && !before.Ended && summary.Started && summary.Ended {
 		record := history.SessionRecord{
+			Version:          2,
 			SessionStartedAt: summary.SessionStartedAt,
 			SessionEndedAt:   time.Now(),
 			TotalActive:      int64(summary.TotalActive),
 			TotalInactive:    int64(summary.TotalInactive),
 			TotalAdded:       int64(summary.TotalAdded),
+			Periods:          a.enrichHistoryPeriods(a.tracker.HistoryPeriods()),
+			Metadata:         map[string]any{},
 		}
 		if err := a.history.Save(record, a.continuedFromHistory); err != nil {
 			a.tracker.Logf("history save error: %v", err)
@@ -598,6 +601,31 @@ func canContinueDay(record *history.SessionRecord, now time.Time) bool {
 	}
 
 	return now.Sub(record.SessionEndedAt) < 6*time.Hour
+}
+
+func (a *App) enrichHistoryPeriods(periods []history.SessionPeriod) []history.SessionPeriod {
+	out := make([]history.SessionPeriod, 0, len(periods))
+	activityColors := make(map[string]string, len(a.ActivityTypeDefinitions()))
+	for _, item := range a.ActivityTypeDefinitions() {
+		activityColors[item.Name] = item.Color
+	}
+	inactivityColors := make(map[string]string, len(a.InactivityTypeDefinitions()))
+	for _, item := range a.InactivityTypeDefinitions() {
+		inactivityColors[item.Name] = item.Color
+	}
+
+	for _, period := range periods {
+		if strings.TrimSpace(period.Color) == "" {
+			switch period.Kind {
+			case "activity":
+				period.Color = activityColors[period.Type]
+			case "inactivity":
+				period.Color = inactivityColors[period.Type]
+			}
+		}
+		out = append(out, period)
+	}
+	return out
 }
 
 func contains(items []string, target string) bool {
