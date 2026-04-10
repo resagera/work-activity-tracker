@@ -200,6 +200,12 @@ const webUIHTML = `<!doctype html>
       gap: 10px;
       margin-bottom: 12px;
     }
+	.time-actions {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 10px;
+      margin-bottom: 12px;
+    }
     .row {
       display: flex;
       gap: 10px;
@@ -406,18 +412,22 @@ const webUIHTML = `<!doctype html>
 
       <section class="card">
         <div class="actions">
-          <button class="secondary" id="btn-refresh">Обновить</button>
-          <button class="secondary" id="btn-start">Старт / Возобновить</button>
-          <button class="ghost" id="btn-pause">Пауза</button>
           <button class="secondary" id="btn-new-day">Начать новый день</button>
           <button class="warn" id="btn-continue-day">Продолжить день</button>
+          <button class="secondary" id="btn-start">Старт / Возобновить</button>
+          <button class="ghost" id="btn-pause">Пауза</button>
+          <button class="danger" id="btn-end">Завершить день</button>
+          <button class="secondary" id="btn-settings">Настройки</button>
+        </div>
+        <div class="time-actions">
+          <button class="ghost" id="btn-add-10">+10м</button>
           <button class="ghost" id="btn-add-30">+30м</button>
           <button class="ghost" id="btn-add-60">+1ч</button>
           <button class="ghost" id="btn-add-120">+2ч</button>
-          <button class="warn" id="btn-sub-10">-10м в неактивное</button>
-          <button class="warn" id="btn-sub-20">-20м в неактивное</button>
-          <button class="warn" id="btn-sub-30">-30м в неактивное</button>
-          <button class="danger" id="btn-end">Завершить день</button>
+          <button class="warn" id="btn-sub-10">-10м</button>
+          <button class="warn" id="btn-sub-20">-20м</button>
+          <button class="warn" id="btn-sub-30">-30м</button>
+          <button class="warn" id="btn-sub-60">-1ч</button>
         </div>
         <div class="row">
           <select id="activity-type-select"></select>
@@ -686,12 +696,14 @@ const webUIHTML = `<!doctype html>
 
       el("btn-pause").disabled = !s.started || s.ended;
       el("btn-end").disabled = !s.started || s.ended;
+      el("btn-add-10").disabled = !s.started || s.ended;
       el("btn-add-30").disabled = !s.started || s.ended;
       el("btn-add-60").disabled = !s.started || s.ended;
       el("btn-add-120").disabled = !s.started || s.ended;
       el("btn-sub-10").disabled = !s.started || s.ended;
       el("btn-sub-20").disabled = !s.started || s.ended;
       el("btn-sub-30").disabled = !s.started || s.ended;
+      el("btn-sub-60").disabled = !s.started || s.ended;
       el("btn-continue-day").disabled = !(s.can_continue_day && (!s.started || s.ended));
       el("btn-set-activity-type").disabled = !s.started || s.ended;
       el("btn-set-activity-color").disabled = !el("activity-type-select").value;
@@ -950,12 +962,14 @@ const webUIHTML = `<!doctype html>
     el("btn-pause").onclick = () => doAction("/pause");
     el("btn-new-day").onclick = () => doAction("/new-day");
     el("btn-continue-day").onclick = () => doAction("/continue-day");
+    el("btn-add-10").onclick = () => doAction("/add?minutes=10", "GET");
     el("btn-add-30").onclick = () => doAction("/add?minutes=30", "GET");
     el("btn-add-60").onclick = () => doAction("/add?minutes=60", "GET");
     el("btn-add-120").onclick = () => doAction("/add?minutes=120", "GET");
     el("btn-sub-10").onclick = () => doAction("/subtract?minutes=10", "GET");
     el("btn-sub-20").onclick = () => doAction("/subtract?minutes=20", "GET");
     el("btn-sub-30").onclick = () => doAction("/subtract?minutes=30", "GET");
+    el("btn-sub-60").onclick = () => doAction("/subtract?minutes=60", "GET");
     el("btn-end").onclick = () => doAction("/end");
     el("btn-theme").onclick = toggleTheme;
     el("btn-add-activity-type").onclick = addActivityType;
