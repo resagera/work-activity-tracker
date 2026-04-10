@@ -206,6 +206,49 @@ const webUIHTML = `<!doctype html>
       flex-wrap: wrap;
       margin-top: 12px;
     }
+    .type-buttons {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 10px;
+    }
+    .type-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 10px 12px;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: color-mix(in srgb, var(--card) 86%, #fff 14%);
+      color: var(--ink);
+      cursor: pointer;
+    }
+    .type-chip.is-active {
+      border-color: color-mix(in srgb, var(--accent) 58%, var(--line));
+      box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 40%, transparent);
+      background: color-mix(in srgb, var(--card) 76%, var(--accent) 24%);
+    }
+    .type-chip-color {
+      width: 12px;
+      height: 12px;
+      border-radius: 4px;
+      border: 1px solid color-mix(in srgb, var(--ink) 18%, transparent);
+      flex: 0 0 auto;
+    }
+    .color-field {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 56px;
+      gap: 10px;
+      flex: 1 1 260px;
+      min-width: 0;
+    }
+    .color-picker {
+      width: 56px;
+      min-width: 56px;
+      padding: 4px;
+      border-radius: 14px;
+      cursor: pointer;
+    }
     select, input {
       width: 100%;
       border: 1px solid var(--line);
@@ -380,26 +423,40 @@ const webUIHTML = `<!doctype html>
           <select id="activity-type-select"></select>
           <button class="ghost" id="btn-set-activity-type">Установить тип активности</button>
         </div>
+        <div class="type-buttons" id="activity-type-buttons"></div>
         <div class="row">
-          <input id="activity-type-color" placeholder="#20256a">
+          <div class="color-field">
+            <input id="activity-type-color" placeholder="#20256a">
+            <input id="activity-type-color-picker" class="color-picker" type="color" value="#20256a">
+          </div>
           <button class="ghost" id="btn-set-activity-color">Установить цвет активности</button>
         </div>
         <div class="row">
           <input id="new-activity-type" placeholder="Новый тип активности, например: проектирование">
-          <input id="new-activity-color" placeholder="#4f46e5">
+          <div class="color-field">
+            <input id="new-activity-color" placeholder="#4f46e5">
+            <input id="new-activity-color-picker" class="color-picker" type="color" value="#4f46e5">
+          </div>
           <button class="ghost" id="btn-add-activity-type">Добавить тип активности</button>
         </div>
         <div class="row">
           <select id="inactivity-type-select"></select>
           <button class="ghost" id="btn-set-inactivity-type">Установить тип</button>
         </div>
+        <div class="type-buttons" id="inactivity-type-buttons"></div>
         <div class="row">
-          <input id="inactivity-type-color" placeholder="#c96c2b">
+          <div class="color-field">
+            <input id="inactivity-type-color" placeholder="#c96c2b">
+            <input id="inactivity-type-color-picker" class="color-picker" type="color" value="#c96c2b">
+          </div>
           <button class="ghost" id="btn-set-inactivity-color">Установить цвет неактивности</button>
         </div>
         <div class="row">
           <input id="new-inactivity-type" placeholder="Новый тип неактивности, например: перекус">
-          <input id="new-inactivity-color" placeholder="#ef4444">
+          <div class="color-field">
+            <input id="new-inactivity-color" placeholder="#ef4444">
+            <input id="new-inactivity-color-picker" class="color-picker" type="color" value="#ef4444">
+          </div>
           <button class="ghost" id="btn-add-inactivity-type">Добавить тип</button>
         </div>
         <div class="message" id="message"></div>
@@ -453,6 +510,85 @@ const webUIHTML = `<!doctype html>
         .replaceAll(">", "&gt;")
         .replaceAll('"', "&quot;")
         .replaceAll("'", "&#39;");
+    }
+
+    function normalizePickerColor(value, fallback = "#808080") {
+      return /^#[0-9a-fA-F]{6}$/.test(String(value || "").trim()) ? String(value).trim() : fallback;
+    }
+
+    function syncColorPair(textId, pickerId, fallback) {
+      const text = el(textId);
+      const picker = el(pickerId);
+      if (!text || !picker) {
+        return;
+      }
+      const applyToPicker = () => {
+        picker.value = normalizePickerColor(text.value, fallback);
+      };
+      const applyToText = () => {
+        text.value = picker.value;
+      };
+      text.addEventListener("input", applyToPicker);
+      picker.addEventListener("input", applyToText);
+      applyToPicker();
+    }
+
+    function renderActivityTypeButtons(items, selectedName) {
+      const root = el("activity-type-buttons");
+      root.innerHTML = "";
+      items.forEach((item) => {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "type-chip" + (item.name === selectedName ? " is-active" : "");
+        button.innerHTML =
+          '<span class="type-chip-color" style="background:' + escapeHtml(item.color || "var(--line)") + ';"></span>' +
+          '<span>' + escapeHtml(item.name) + '</span>';
+        button.onclick = () => {
+          el("activity-type-select").value = item.name;
+          syncActivityTypeControls();
+        };
+        root.appendChild(button);
+      });
+    }
+
+    function renderInactivityTypeButtons(items, selectedName) {
+      const root = el("inactivity-type-buttons");
+      root.innerHTML = "";
+      items.forEach((item) => {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "type-chip" + (item.name === selectedName ? " is-active" : "");
+        button.innerHTML =
+          '<span class="type-chip-color" style="background:' + escapeHtml(item.color || "var(--line)") + ';"></span>' +
+          '<span>' + escapeHtml(item.name) + '</span>';
+        button.onclick = () => {
+          el("inactivity-type-select").value = item.name;
+          syncInactivityTypeControls();
+        };
+        root.appendChild(button);
+      });
+    }
+
+    function syncActivityTypeControls() {
+      const select = el("activity-type-select");
+      const selected = select.selectedOptions[0];
+      const color = selected?.dataset.color || "";
+      el("activity-type-color").value = color;
+      el("activity-type-color-picker").value = normalizePickerColor(color, "#20256a");
+      Array.from(el("activity-type-buttons").children).forEach((node, index) => {
+        node.classList.toggle("is-active", state.activityTypes[index]?.name === select.value);
+      });
+    }
+
+    function syncInactivityTypeControls() {
+      const select = el("inactivity-type-select");
+      const selected = select.selectedOptions[0];
+      const color = selected?.dataset.color || "";
+      el("inactivity-type-color").value = color;
+      el("inactivity-type-color-picker").value = normalizePickerColor(color, "#c96c2b");
+      Array.from(el("inactivity-type-buttons").children).forEach((node, index) => {
+        node.classList.toggle("is-active", state.inactivityTypes[index]?.name === select.value);
+      });
     }
 
     function periodDurationMs(period) {
@@ -577,7 +713,15 @@ const webUIHTML = `<!doctype html>
         }
         select.appendChild(option);
       });
+      if (!select.value && state.activityTypes.length) {
+        select.value = state.activityTypes[0].name;
+      }
+      if (payload.current_type) {
+        select.value = payload.current_type;
+      }
+      renderActivityTypeButtons(state.activityTypes, select.value);
       el("activity-type-color").value = payload.current_color || select.selectedOptions[0]?.dataset.color || "";
+      el("activity-type-color-picker").value = normalizePickerColor(el("activity-type-color").value, "#20256a");
     }
 
     function renderInactivityTypes(payload) {
@@ -594,7 +738,15 @@ const webUIHTML = `<!doctype html>
         }
         select.appendChild(option);
       });
+      if (!select.value && state.inactivityTypes.length) {
+        select.value = state.inactivityTypes[0].name;
+      }
+      if (payload.current_type) {
+        select.value = payload.current_type;
+      }
+      renderInactivityTypeButtons(state.inactivityTypes, select.value);
       el("inactivity-type-color").value = payload.current_color || select.selectedOptions[0]?.dataset.color || "";
+      el("inactivity-type-color-picker").value = normalizePickerColor(el("inactivity-type-color").value, "#c96c2b");
     }
 
     function applyTheme(theme) {
@@ -820,12 +972,13 @@ const webUIHTML = `<!doctype html>
       body.classList.toggle("is-hidden");
       el("current-periods-toggle").textContent = body.classList.contains("is-hidden") ? "(показать)" : "(скрыть)";
     };
-    el("activity-type-select").onchange = () => {
-      el("activity-type-color").value = el("activity-type-select").selectedOptions[0]?.dataset.color || "";
-    };
-    el("inactivity-type-select").onchange = () => {
-      el("inactivity-type-color").value = el("inactivity-type-select").selectedOptions[0]?.dataset.color || "";
-    };
+    el("activity-type-select").onchange = syncActivityTypeControls;
+    el("inactivity-type-select").onchange = syncInactivityTypeControls;
+
+    syncColorPair("activity-type-color", "activity-type-color-picker", "#20256a");
+    syncColorPair("new-activity-color", "new-activity-color-picker", "#4f46e5");
+    syncColorPair("inactivity-type-color", "inactivity-type-color-picker", "#c96c2b");
+    syncColorPair("new-inactivity-color", "new-inactivity-color-picker", "#ef4444");
 
     applyTheme(localStorage.getItem(themeKey) || "light");
     refreshAll();
