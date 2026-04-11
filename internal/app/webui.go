@@ -194,6 +194,21 @@ const webUIHTML = `<!doctype html>
     }
     .details-row:last-child { border-bottom: 0; padding-bottom: 0; }
     .details-key { color: var(--muted); }
+    .trigger-list {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+    .trigger-chip {
+      display: inline-flex;
+      align-items: center;
+      padding: 6px 10px;
+      border-radius: 999px;
+      border: 1px solid var(--line);
+      background: color-mix(in srgb, var(--card) 84%, #fff 16%);
+      font-size: 12px;
+      line-height: 1.2;
+    }
     .actions {
       display: grid;
       grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -229,6 +244,11 @@ const webUIHTML = `<!doctype html>
       color: var(--ink);
       cursor: pointer;
     }
+    .type-chip:disabled {
+      opacity: .55;
+      cursor: not-allowed;
+      transform: none;
+    }
     .type-chip.is-active {
       border-color: color-mix(in srgb, var(--accent) 58%, var(--line));
       box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 40%, transparent);
@@ -254,6 +274,13 @@ const webUIHTML = `<!doctype html>
       padding: 4px;
       border-radius: 14px;
       cursor: pointer;
+    }
+    .settings-panel {
+      margin-top: 14px;
+      padding-top: 14px;
+      border-top: 1px dashed var(--line);
+      display: grid;
+      gap: 12px;
     }
     select, input {
       width: 100%;
@@ -403,9 +430,9 @@ const webUIHTML = `<!doctype html>
           <div class="details-row"><div class="details-key">Тип активности</div><div id="current-activity-type">-</div></div>
           <div class="details-row"><div class="details-key">Тип неактивности</div><div id="current-inactivity-type">-</div></div>
           <div class="details-row"><div class="details-key">Активное окно</div><div id="window-title">-</div></div>
-          <div class="details-row"><div class="details-key">GTK App ID</div><div id="window-gtk">-</div></div>
-          <div class="details-row"><div class="details-key">KDE Desktop File</div><div id="window-kde">-</div></div>
-          <div class="details-row"><div class="details-key">WM_CLASS</div><div id="window-class">-</div></div>
+          <div class="details-row"><div class="details-key">Триггеры окна</div><div id="window-title-triggers">-</div></div>
+          <div class="details-row"><div class="details-key">Активное приложение</div><div id="window-class">-</div></div>
+          <div class="details-row"><div class="details-key">Триггеры приложения</div><div id="window-app-triggers">-</div></div>
           <div class="details-row"><div class="details-key">Последнее изменение</div><div id="last-change">-</div></div>
         </div>
       </section>
@@ -429,45 +456,42 @@ const webUIHTML = `<!doctype html>
           <button class="warn" id="btn-sub-30">-30м</button>
           <button class="warn" id="btn-sub-60">-1ч</button>
         </div>
-        <div class="row">
-          <select id="activity-type-select"></select>
-          <button class="ghost" id="btn-set-activity-type">Установить тип активности</button>
-        </div>
         <div class="type-buttons" id="activity-type-buttons"></div>
-        <div class="row">
-          <div class="color-field">
-            <input id="activity-type-color" placeholder="#20256a">
-            <input id="activity-type-color-picker" class="color-picker" type="color" value="#20256a">
-          </div>
-          <button class="ghost" id="btn-set-activity-color">Установить цвет активности</button>
-        </div>
-        <div class="row">
-          <input id="new-activity-type" placeholder="Новый тип активности, например: проектирование">
-          <div class="color-field">
-            <input id="new-activity-color" placeholder="#4f46e5">
-            <input id="new-activity-color-picker" class="color-picker" type="color" value="#4f46e5">
-          </div>
-          <button class="ghost" id="btn-add-activity-type">Добавить тип активности</button>
-        </div>
-        <div class="row">
-          <select id="inactivity-type-select"></select>
-          <button class="ghost" id="btn-set-inactivity-type">Установить тип</button>
-        </div>
         <div class="type-buttons" id="inactivity-type-buttons"></div>
-        <div class="row">
-          <div class="color-field">
-            <input id="inactivity-type-color" placeholder="#c96c2b">
-            <input id="inactivity-type-color-picker" class="color-picker" type="color" value="#c96c2b">
+        <div id="settings-panel" class="settings-panel is-hidden">
+          <div class="row">
+            <button class="secondary" id="btn-refresh">Обновить</button>
           </div>
-          <button class="ghost" id="btn-set-inactivity-color">Установить цвет неактивности</button>
-        </div>
-        <div class="row">
-          <input id="new-inactivity-type" placeholder="Новый тип неактивности, например: перекус">
-          <div class="color-field">
-            <input id="new-inactivity-color" placeholder="#ef4444">
-            <input id="new-inactivity-color-picker" class="color-picker" type="color" value="#ef4444">
+          <div class="row">
+            <div class="color-field">
+              <input id="activity-type-color" placeholder="#20256a">
+              <input id="activity-type-color-picker" class="color-picker" type="color" value="#20256a">
+            </div>
+            <button class="ghost" id="btn-set-activity-color">Установить цвет активности</button>
           </div>
-          <button class="ghost" id="btn-add-inactivity-type">Добавить тип</button>
+          <div class="row">
+            <input id="new-activity-type" placeholder="Новый тип активности, например: проектирование">
+            <div class="color-field">
+              <input id="new-activity-color" placeholder="#4f46e5">
+              <input id="new-activity-color-picker" class="color-picker" type="color" value="#4f46e5">
+            </div>
+            <button class="ghost" id="btn-add-activity-type">Добавить тип активности</button>
+          </div>
+          <div class="row">
+            <div class="color-field">
+              <input id="inactivity-type-color" placeholder="#c96c2b">
+              <input id="inactivity-type-color-picker" class="color-picker" type="color" value="#c96c2b">
+            </div>
+            <button class="ghost" id="btn-set-inactivity-color">Установить цвет неактивности</button>
+          </div>
+          <div class="row">
+            <input id="new-inactivity-type" placeholder="Новый тип неактивности, например: перекус">
+            <div class="color-field">
+              <input id="new-inactivity-color" placeholder="#ef4444">
+              <input id="new-inactivity-color-picker" class="color-picker" type="color" value="#ef4444">
+            </div>
+            <button class="ghost" id="btn-add-inactivity-type">Добавить тип</button>
+          </div>
         </div>
         <div class="message" id="message"></div>
       </section>
@@ -483,7 +507,7 @@ const webUIHTML = `<!doctype html>
   </div>
 
   <script>
-    const state = { status: null, activityTypes: [], inactivityTypes: [] };
+    const state = { status: null, activityTypes: [], inactivityTypes: [], selectedActivityType: "", selectedInactivityType: "", titleTriggers: [], appTriggers: [] };
     const themeKey = "wat-webui-theme";
 
     const el = (id) => document.getElementById(id);
@@ -496,6 +520,15 @@ const webUIHTML = `<!doctype html>
       }
       const swatch = color ? '<span class="swatch" style="background:' + color + '"></span>' : "";
       node.innerHTML = swatch + name;
+    }
+
+    function setTriggerList(id, items) {
+      const node = el(id);
+      if (!Array.isArray(items) || !items.length) {
+        node.textContent = "-";
+        return;
+      }
+      node.innerHTML = '<div class="trigger-list">' + items.map((item) => '<span class="trigger-chip">' + escapeHtml(item) + '</span>').join("") + '</div>';
     }
 
     function formatDurationFromNs(ns) {
@@ -550,13 +583,11 @@ const webUIHTML = `<!doctype html>
         const button = document.createElement("button");
         button.type = "button";
         button.className = "type-chip" + (item.name === selectedName ? " is-active" : "");
+        button.disabled = !state.status?.started || state.status?.ended;
         button.innerHTML =
           '<span class="type-chip-color" style="background:' + escapeHtml(item.color || "var(--line)") + ';"></span>' +
           '<span>' + escapeHtml(item.name) + '</span>';
-        button.onclick = () => {
-          el("activity-type-select").value = item.name;
-          syncActivityTypeControls();
-        };
+        button.onclick = () => setCurrentActivityType(item.name);
         root.appendChild(button);
       });
     }
@@ -568,36 +599,32 @@ const webUIHTML = `<!doctype html>
         const button = document.createElement("button");
         button.type = "button";
         button.className = "type-chip" + (item.name === selectedName ? " is-active" : "");
+        button.disabled = !(state.status?.started && !state.status?.ended && state.status?.paused_manually);
         button.innerHTML =
           '<span class="type-chip-color" style="background:' + escapeHtml(item.color || "var(--line)") + ';"></span>' +
           '<span>' + escapeHtml(item.name) + '</span>';
-        button.onclick = () => {
-          el("inactivity-type-select").value = item.name;
-          syncInactivityTypeControls();
-        };
+        button.onclick = () => setCurrentInactivityType(item.name);
         root.appendChild(button);
       });
     }
 
     function syncActivityTypeControls() {
-      const select = el("activity-type-select");
-      const selected = select.selectedOptions[0];
-      const color = selected?.dataset.color || "";
+      const selected = state.activityTypes.find((item) => item.name === state.selectedActivityType);
+      const color = selected?.color || "";
       el("activity-type-color").value = color;
       el("activity-type-color-picker").value = normalizePickerColor(color, "#20256a");
       Array.from(el("activity-type-buttons").children).forEach((node, index) => {
-        node.classList.toggle("is-active", state.activityTypes[index]?.name === select.value);
+        node.classList.toggle("is-active", state.activityTypes[index]?.name === state.selectedActivityType);
       });
     }
 
     function syncInactivityTypeControls() {
-      const select = el("inactivity-type-select");
-      const selected = select.selectedOptions[0];
-      const color = selected?.dataset.color || "";
+      const selected = state.inactivityTypes.find((item) => item.name === state.selectedInactivityType);
+      const color = selected?.color || "";
       el("inactivity-type-color").value = color;
       el("inactivity-type-color-picker").value = normalizePickerColor(color, "#c96c2b");
       Array.from(el("inactivity-type-buttons").children).forEach((node, index) => {
-        node.classList.toggle("is-active", state.inactivityTypes[index]?.name === select.value);
+        node.classList.toggle("is-active", state.inactivityTypes[index]?.name === state.selectedInactivityType);
       });
     }
 
@@ -685,9 +712,9 @@ const webUIHTML = `<!doctype html>
       setTypeText("current-activity-type", s.current_activity_type, s.current_activity_color);
       setTypeText("current-inactivity-type", s.current_inactivity_type, s.current_inactivity_color);
       setText("window-title", s.window?.title || "-");
-      setText("window-gtk", s.window?.gtk_application_id || "-");
-      setText("window-kde", s.window?.kde_net_wm_desktop_file || "-");
       setText("window-class", s.window?.wm_class || "-");
+      setTriggerList("window-title-triggers", state.titleTriggers);
+      setTriggerList("window-app-triggers", state.appTriggers);
       setText("last-change", s.last_state_change ? new Date(s.last_state_change).toLocaleString() : "-");
       el("current-periods-strip").innerHTML = buildPeriodStrip(s.periods, "Сессия пока не начата.");
       el("current-periods-list").innerHTML = buildPeriodsList(s.periods, "Нет данных по периодам");
@@ -705,59 +732,31 @@ const webUIHTML = `<!doctype html>
       el("btn-sub-30").disabled = !s.started || s.ended;
       el("btn-sub-60").disabled = !s.started || s.ended;
       el("btn-continue-day").disabled = !(s.can_continue_day && (!s.started || s.ended));
-      el("btn-set-activity-type").disabled = !s.started || s.ended;
-      el("btn-set-activity-color").disabled = !el("activity-type-select").value;
-      el("btn-set-inactivity-type").disabled = !(s.started && !s.ended && s.paused_manually);
-      el("btn-set-inactivity-color").disabled = !el("inactivity-type-select").value;
+      el("btn-set-activity-color").disabled = !state.selectedActivityType;
+      el("btn-set-inactivity-color").disabled = !state.selectedInactivityType;
+      renderActivityTypeButtons(state.activityTypes, state.selectedActivityType);
+      renderInactivityTypeButtons(state.inactivityTypes, state.selectedInactivityType);
     }
 
     function renderActivityTypes(payload) {
       state.activityTypes = payload.types || [];
-      const select = el("activity-type-select");
-      select.innerHTML = "";
-      state.activityTypes.forEach((item) => {
-        const option = document.createElement("option");
-        option.value = item.name;
-        option.textContent = item.color ? item.name + " [" + item.color + "]" : item.name;
-        option.dataset.color = item.color || "";
-        if (item.name === payload.current_type) {
-          option.selected = true;
-        }
-        select.appendChild(option);
-      });
-      if (!select.value && state.activityTypes.length) {
-        select.value = state.activityTypes[0].name;
+      state.selectedActivityType = payload.current_type || state.selectedActivityType;
+      if (!state.selectedActivityType && state.activityTypes.length) {
+        state.selectedActivityType = state.activityTypes[0].name;
       }
-      if (payload.current_type) {
-        select.value = payload.current_type;
-      }
-      renderActivityTypeButtons(state.activityTypes, select.value);
-      el("activity-type-color").value = payload.current_color || select.selectedOptions[0]?.dataset.color || "";
+      renderActivityTypeButtons(state.activityTypes, state.selectedActivityType);
+      el("activity-type-color").value = payload.current_color || state.activityTypes.find((item) => item.name === state.selectedActivityType)?.color || "";
       el("activity-type-color-picker").value = normalizePickerColor(el("activity-type-color").value, "#20256a");
     }
 
     function renderInactivityTypes(payload) {
       state.inactivityTypes = payload.types || [];
-      const select = el("inactivity-type-select");
-      select.innerHTML = "";
-      state.inactivityTypes.forEach((item) => {
-        const option = document.createElement("option");
-        option.value = item.name;
-        option.textContent = item.color ? item.name + " [" + item.color + "]" : item.name;
-        option.dataset.color = item.color || "";
-        if (item.name === payload.current_type) {
-          option.selected = true;
-        }
-        select.appendChild(option);
-      });
-      if (!select.value && state.inactivityTypes.length) {
-        select.value = state.inactivityTypes[0].name;
+      state.selectedInactivityType = payload.current_type || state.selectedInactivityType;
+      if (!state.selectedInactivityType && state.inactivityTypes.length) {
+        state.selectedInactivityType = state.inactivityTypes[0].name;
       }
-      if (payload.current_type) {
-        select.value = payload.current_type;
-      }
-      renderInactivityTypeButtons(state.inactivityTypes, select.value);
-      el("inactivity-type-color").value = payload.current_color || select.selectedOptions[0]?.dataset.color || "";
+      renderInactivityTypeButtons(state.inactivityTypes, state.selectedInactivityType);
+      el("inactivity-type-color").value = payload.current_color || state.inactivityTypes.find((item) => item.name === state.selectedInactivityType)?.color || "";
       el("inactivity-type-color-picker").value = normalizePickerColor(el("inactivity-type-color").value, "#c96c2b");
     }
 
@@ -828,12 +827,15 @@ const webUIHTML = `<!doctype html>
 
     async function refreshAll(showMessage = false) {
       try {
-        const [status, history, activityTypes, inactivityTypes] = await Promise.all([
+        const [status, history, activityTypes, inactivityTypes, windowTriggers] = await Promise.all([
           api("/status"),
           api("/history"),
           api("/activity-types"),
           api("/inactivity-types"),
+          api("/window-triggers"),
         ]);
+        state.titleTriggers = windowTriggers.title_triggers || [];
+        state.appTriggers = windowTriggers.app_triggers || [];
         renderStatus(status);
         renderHistory(history);
         renderActivityTypes(activityTypes);
@@ -897,30 +899,28 @@ const webUIHTML = `<!doctype html>
       }
     }
 
-    async function setCurrentActivityType() {
-      const select = el("activity-type-select");
-      const name = select.value;
+    async function setCurrentActivityType(name = state.selectedActivityType) {
       if (!name) {
         setMessage("Выберите тип активности", true);
         return;
       }
       try {
         await api("/activity-type/set?name=" + encodeURIComponent(name), { method: "POST" });
+        state.selectedActivityType = name;
         await refreshAll();
       } catch (err) {
         setMessage(err.message || String(err), true);
       }
     }
 
-    async function setCurrentInactivityType() {
-      const select = el("inactivity-type-select");
-      const name = select.value;
+    async function setCurrentInactivityType(name = state.selectedInactivityType) {
       if (!name) {
         setMessage("Выберите тип неактивности", true);
         return;
       }
       try {
         await api("/inactivity-type/set?name=" + encodeURIComponent(name), { method: "POST" });
+        state.selectedInactivityType = name;
         await refreshAll();
       } catch (err) {
         setMessage(err.message || String(err), true);
@@ -928,7 +928,7 @@ const webUIHTML = `<!doctype html>
     }
 
     async function setActivityTypeColor() {
-      const name = el("activity-type-select").value;
+      const name = state.selectedActivityType;
       const color = el("activity-type-color").value.trim();
       if (!name || !color) {
         setMessage("Выберите тип активности и цвет", true);
@@ -943,7 +943,7 @@ const webUIHTML = `<!doctype html>
     }
 
     async function setInactivityTypeColor() {
-      const name = el("inactivity-type-select").value;
+      const name = state.selectedInactivityType;
       const color = el("inactivity-type-color").value.trim();
       if (!name || !color) {
         setMessage("Выберите тип неактивности и цвет", true);
@@ -955,6 +955,12 @@ const webUIHTML = `<!doctype html>
       } catch (err) {
         setMessage(err.message || String(err), true);
       }
+    }
+
+    function toggleSettings() {
+      const panel = el("settings-panel");
+      panel.classList.toggle("is-hidden");
+      el("btn-settings").textContent = panel.classList.contains("is-hidden") ? "Настройки" : "Скрыть настройки";
     }
 
     el("btn-refresh").onclick = () => refreshAll(true);
@@ -972,11 +978,10 @@ const webUIHTML = `<!doctype html>
     el("btn-sub-60").onclick = () => doAction("/subtract?minutes=60", "GET");
     el("btn-end").onclick = () => doAction("/end");
     el("btn-theme").onclick = toggleTheme;
+    el("btn-settings").onclick = toggleSettings;
     el("btn-add-activity-type").onclick = addActivityType;
-    el("btn-set-activity-type").onclick = setCurrentActivityType;
     el("btn-set-activity-color").onclick = setActivityTypeColor;
     el("btn-add-inactivity-type").onclick = addInactivityType;
-    el("btn-set-inactivity-type").onclick = setCurrentInactivityType;
     el("btn-set-inactivity-color").onclick = setInactivityTypeColor;
     el("current-periods-toggle").onclick = () => {
       const body = el("current-periods-list");
@@ -986,9 +991,6 @@ const webUIHTML = `<!doctype html>
       body.classList.toggle("is-hidden");
       el("current-periods-toggle").textContent = body.classList.contains("is-hidden") ? "(показать)" : "(скрыть)";
     };
-    el("activity-type-select").onchange = syncActivityTypeControls;
-    el("inactivity-type-select").onchange = syncInactivityTypeControls;
-
     syncColorPair("activity-type-color", "activity-type-color-picker", "#20256a");
     syncColorPair("new-activity-color", "new-activity-color-picker", "#4f46e5");
     syncColorPair("inactivity-type-color", "inactivity-type-color-picker", "#c96c2b");

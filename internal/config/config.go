@@ -50,21 +50,23 @@ func (d Duration) MarshalJSON() ([]byte, error) {
 }
 
 type Config struct {
-	TelegramToken              string   `json:"telegram_token"`
-	TelegramChatID             int64    `json:"telegram_chat_id"`
-	HTTPPort                   int      `json:"http_port"`
-	AutoStartDay               bool     `json:"auto_start_day"`
-	EnableDesktopNotifications bool     `json:"enable_desktop_notifications"`
-	HistoryFile                string   `json:"history_file"`
-	ActivityTypesFile          string   `json:"activity_types_file"`
-	DefaultActivityType        string   `json:"default_activity_type"`
-	InactivityTypesFile        string   `json:"inactivity_types_file"`
-	LogFile                    string   `json:"log_file"`
-	IdleWarnAfter              Duration `json:"idle_warn_after"`
-	StopAfterWarn              Duration `json:"stop_after_warn"`
-	PollInterval               Duration `json:"poll_interval"`
-	ExcludedWindowSubstrings   []string `json:"excluded_window_substrings"`
-	ShowVersion                bool     `json:"show_version"`
+	TelegramToken                 string   `json:"telegram_token"`
+	TelegramChatID                int64    `json:"telegram_chat_id"`
+	HTTPPort                      int      `json:"http_port"`
+	AutoStartDay                  bool     `json:"auto_start_day"`
+	EnableDesktopNotifications    bool     `json:"enable_desktop_notifications"`
+	HistoryFile                   string   `json:"history_file"`
+	ActivityTypesFile             string   `json:"activity_types_file"`
+	DefaultActivityType           string   `json:"default_activity_type"`
+	InactivityTypesFile           string   `json:"inactivity_types_file"`
+	LogFile                       string   `json:"log_file"`
+	IdleWarnAfter                 Duration `json:"idle_warn_after"`
+	StopAfterWarn                 Duration `json:"stop_after_warn"`
+	PollInterval                  Duration `json:"poll_interval"`
+	ExcludedWindowSubstrings      []string `json:"excluded_window_substrings"`
+	ExcludedWindowTitleSubstrings []string `json:"excluded_window_title_substrings"`
+	ExcludedAppSubstrings         []string `json:"excluded_app_substrings"`
+	ShowVersion                   bool     `json:"show_version"`
 }
 
 func Default() Config {
@@ -79,6 +81,10 @@ func Default() Config {
 		StopAfterWarn:              Duration{Duration: DefaultStopAfterWarn},
 		PollInterval:               Duration{Duration: DefaultPollInterval},
 		ExcludedWindowSubstrings: []string{
+			"Telegram",
+			"Youtube",
+		},
+		ExcludedWindowTitleSubstrings: []string{
 			"Telegram",
 			"Youtube",
 		},
@@ -132,6 +138,9 @@ func Load(path string) (Config, error) {
 	}
 	if cfg.PollInterval.Duration <= 0 {
 		cfg.PollInterval = Duration{Duration: DefaultPollInterval}
+	}
+	if len(cfg.ExcludedWindowTitleSubstrings) == 0 && len(cfg.ExcludedWindowSubstrings) > 0 {
+		cfg.ExcludedWindowTitleSubstrings = append([]string{}, cfg.ExcludedWindowSubstrings...)
 	}
 
 	return cfg, nil

@@ -103,6 +103,13 @@ func (a *App) runHTTP(ctx context.Context) {
 		writeJSON(w, http.StatusOK, a.Summary())
 	})
 
+	mux.HandleFunc("/window-triggers", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, http.StatusOK, map[string]any{
+			"title_triggers": a.cfg.ExcludedWindowTitleSubstrings,
+			"app_triggers":   a.cfg.ExcludedAppSubstrings,
+		})
+	})
+
 	mux.HandleFunc("/history", func(w http.ResponseWriter, r *http.Request) {
 		records, err := a.history.LoadAll()
 		if err != nil {
@@ -330,7 +337,7 @@ func (a *App) runActiveWindowPolling(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			info, err := a.env.ActiveWindowInfo(a.cfg.ExcludedWindowSubstrings)
+			info, err := a.env.ActiveWindowInfo(a.cfg.ExcludedWindowTitleSubstrings, a.cfg.ExcludedAppSubstrings)
 			if err != nil {
 				a.tracker.Logf("active window check error: %v", err)
 				continue

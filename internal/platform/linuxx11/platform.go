@@ -98,7 +98,7 @@ func (e *Environment) WatchScreenLock(ctx context.Context, onChange func(bool)) 
 	}
 }
 
-func (e *Environment) ActiveWindowInfo(excluded []string) (platform.WindowInfo, error) {
+func (e *Environment) ActiveWindowInfo(titleExcluded []string, appExcluded []string) (platform.WindowInfo, error) {
 	windowID, err := getFocusedWindowID()
 	if err != nil {
 		return platform.WindowInfo{}, err
@@ -122,7 +122,7 @@ func (e *Environment) ActiveWindowInfo(excluded []string) (platform.WindowInfo, 
 		WMClass:          parseWMClass(xpropOut),
 	}
 
-	blocked, field, substr := matchWindowInfo(info, excluded)
+	blocked, field, substr := matchWindowInfo(info, titleExcluded, appExcluded)
 	info.BlockedByRule = blocked
 	info.MatchedField = field
 	info.MatchedSubstring = substr
@@ -210,27 +210,24 @@ func trimQuoted(s string) string {
 	return s
 }
 
-func matchWindowInfo(info platform.WindowInfo, excluded []string) (bool, string, string) {
-	fields := []struct {
-		name  string
-		value string
-	}{
-		{name: "title", value: info.Title},
-		{name: "_GTK_APPLICATION_ID", value: info.GTKApplicationID},
-		{name: "_KDE_NET_WM_DESKTOP_FILE", value: info.KDEDesktopFile},
-		{name: "WM_CLASS", value: info.WMClass},
-	}
-
-	for _, sub := range excluded {
+func matchWindowInfo(info platform.WindowInfo, titleExcluded []string, appExcluded []string) (bool, string, string) {
+	for _, sub := range titleExcluded {
 		sub = strings.TrimSpace(sub)
 		if sub == "" {
 			continue
 		}
+		if strings.Contains(strings.ToLower(info.Title), strings.ToLower(sub)) {
+			return true, "title", sub
+		}
+	}
 
-		for _, field := range fields {
-			if strings.Contains(strings.ToLower(field.value), strings.ToLower(sub)) {
-				return true, field.name, sub
-			}
+	for _, sub := range appExcluded {
+		sub = strings.TrimSpace(sub)
+		if sub == "" {
+			continue
+		}
+		if strings.Contains(strings.ToLower(info.WMClass), strings.ToLower(sub)) {
+			return true, "WM_CLASS", sub
 		}
 	}
 

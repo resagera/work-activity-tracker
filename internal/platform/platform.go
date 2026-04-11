@@ -20,6 +20,6 @@ type Environment interface {
 	IdleDuration() (time.Duration, error)
 	IsScreenLocked() (bool, error)
 	WatchScreenLock(ctx context.Context, onChange func(bool)) error
-	ActiveWindowInfo(excluded []string) (WindowInfo, error)
+	ActiveWindowInfo(titleExcluded []string, appExcluded []string) (WindowInfo, error)
 	SendDesktopNotification(title, body string) error
 }
