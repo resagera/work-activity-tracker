@@ -209,6 +209,17 @@ const webUIHTML = `<!doctype html>
       font-size: 12px;
       line-height: 1.2;
     }
+    .detail-inline-toggle {
+      color: var(--accent);
+      cursor: pointer;
+      text-decoration: underline;
+      text-underline-offset: 2px;
+    }
+    .detail-stats {
+      margin-top: 8px;
+      display: grid;
+      gap: 8px;
+    }
     .actions {
       display: grid;
       grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -429,9 +440,9 @@ const webUIHTML = `<!doctype html>
         <div class="details">
           <div class="details-row"><div class="details-key">Тип активности</div><div id="current-activity-type">-</div></div>
           <div class="details-row"><div class="details-key">Тип неактивности</div><div id="current-inactivity-type">-</div></div>
-          <div class="details-row"><div class="details-key">Активное окно</div><div id="window-title">-</div></div>
+          <div class="details-row"><div class="details-key">Активное окно</div><div><div id="window-title">-</div><div id="window-title-stats" class="detail-stats is-hidden"></div></div></div>
           <div class="details-row"><div class="details-key">Триггеры окна</div><div id="window-title-triggers">-</div></div>
-          <div class="details-row"><div class="details-key">Активное приложение</div><div id="window-class">-</div></div>
+          <div class="details-row"><div class="details-key">Активное приложение</div><div><div id="window-class">-</div><div id="window-class-stats" class="detail-stats is-hidden"></div></div></div>
           <div class="details-row"><div class="details-key">Триггеры приложения</div><div id="window-app-triggers">-</div></div>
           <div class="details-row"><div class="details-key">Последнее изменение</div><div id="last-change">-</div></div>
         </div>
@@ -529,6 +540,47 @@ const webUIHTML = `<!doctype html>
         return;
       }
       node.innerHTML = '<div class="trigger-list">' + items.map((item) => '<span class="trigger-chip">' + escapeHtml(item) + '</span>').join("") + '</div>';
+    }
+
+    function setUsageSummary(id, label, currentValue, count, isOpen) {
+      const node = el(id);
+      if (!count) {
+        node.textContent = currentValue || "-";
+        return;
+      }
+      node.innerHTML =
+        escapeHtml(currentValue || "-") +
+        ' <span class="detail-inline-toggle" data-target="' + escapeHtml(id) + '-stats">' +
+        'уникальные: ' + count + ' ' + (isOpen ? '(скрыть)' : '(показать)') +
+        '</span>';
+    }
+
+    function buildUsageStatsList(items, emptyText) {
+      if (!Array.isArray(items) || !items.length) {
+        return '<div class="period-strip-empty">' + escapeHtml(emptyText) + '</div>';
+      }
+      return items.map((item) => {
+        return '' +
+          '<div class="period-item">' +
+            '<div class="period-head">' +
+              '<strong>' + escapeHtml(item.name) + '</strong>' +
+              '<span>' + formatDurationFromNs(item.active_ns) + '</span>' +
+            '</div>' +
+          '</div>';
+      }).join("");
+    }
+
+    function bindUsageToggle(summaryId) {
+      const root = el(summaryId);
+      const toggle = root.querySelector(".detail-inline-toggle");
+      if (!toggle) {
+        return;
+      }
+      toggle.onclick = () => {
+        const target = el(toggle.dataset.target);
+        target.classList.toggle("is-hidden");
+        renderStatus(state.status);
+      };
     }
 
     function formatDurationFromNs(ns) {
@@ -711,8 +763,12 @@ const webUIHTML = `<!doctype html>
       setText("added-total", formatDurationFromNs(s.total_added));
       setTypeText("current-activity-type", s.current_activity_type, s.current_activity_color);
       setTypeText("current-inactivity-type", s.current_inactivity_type, s.current_inactivity_color);
-      setText("window-title", s.window?.title || "-");
-      setText("window-class", s.window?.wm_class || "-");
+      el("window-title-stats").innerHTML = buildUsageStatsList(s.window_stats, "Нет данных по окнам");
+      el("window-class-stats").innerHTML = buildUsageStatsList(s.app_stats, "Нет данных по приложениям");
+      setUsageSummary("window-title", "окна", s.window?.title || "-", s.window_count || 0, !el("window-title-stats").classList.contains("is-hidden"));
+      setUsageSummary("window-class", "приложения", s.window?.wm_class || "-", s.app_count || 0, !el("window-class-stats").classList.contains("is-hidden"));
+      bindUsageToggle("window-title");
+      bindUsageToggle("window-class");
       setTriggerList("window-title-triggers", state.titleTriggers);
       setTriggerList("window-app-triggers", state.appTriggers);
       setText("last-change", s.last_state_change ? new Date(s.last_state_change).toLocaleString() : "-");
@@ -797,6 +853,8 @@ const webUIHTML = `<!doctype html>
               '<span>Неактивность: ' + formatDurationFromNs(item.total_inactive) + '</span>' +
               '<span>Добавлено: ' + formatDurationFromNs(item.total_added) + '</span>' +
               '<span>Периодов: ' + periods.length + (periods.length ? ' <span class="history-link">(показать)</span>' : '') + '</span>' +
+              '<span>Окон: ' + (item.window_count || 0) + '</span>' +
+              '<span>Приложений: ' + (item.app_count || 0) + '</span>' +
             '</div>' +
             '<div class="history-visual">' +
               '<div class="history-visual-label">Периоды сессии</div>' +

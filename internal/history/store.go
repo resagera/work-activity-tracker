@@ -9,12 +9,23 @@ import (
 	"time"
 )
 
+const (
+	MetadataWindowUsageKey = "window_usage_ns"
+	MetadataAppUsageKey    = "app_usage_ns"
+)
+
 type SessionPeriod struct {
 	Kind      string    `json:"kind"`
 	Type      string    `json:"type"`
 	Color     string    `json:"color"`
 	StartedAt time.Time `json:"started_at"`
 	EndedAt   time.Time `json:"ended_at"`
+}
+
+type ActivityStat struct {
+	Name     string  `json:"name"`
+	ActiveNS int64   `json:"active_ns"`
+	Percent  float64 `json:"percent"`
 }
 
 type SessionRecord struct {
@@ -24,8 +35,36 @@ type SessionRecord struct {
 	TotalActive      int64           `json:"total_active"`
 	TotalInactive    int64           `json:"total_inactive"`
 	TotalAdded       int64           `json:"total_added"`
+	WindowCount      int             `json:"window_count,omitempty"`
+	AppCount         int             `json:"app_count,omitempty"`
+	TopWindows       []ActivityStat  `json:"top_windows,omitempty"`
+	TopApps          []ActivityStat  `json:"top_apps,omitempty"`
 	Periods          []SessionPeriod `json:"periods,omitempty"`
 	Metadata         map[string]any  `json:"metadata,omitempty"`
+}
+
+func MetadataUsageMap(metadata map[string]any, key string) map[string]time.Duration {
+	raw, ok := metadata[key]
+	if !ok {
+		return map[string]time.Duration{}
+	}
+	items, ok := raw.(map[string]any)
+	if !ok {
+		return map[string]time.Duration{}
+	}
+
+	out := make(map[string]time.Duration, len(items))
+	for name, value := range items {
+		switch v := value.(type) {
+		case float64:
+			out[name] = time.Duration(int64(v))
+		case int64:
+			out[name] = time.Duration(v)
+		case int:
+			out[name] = time.Duration(v)
+		}
+	}
+	return out
 }
 
 type Store struct {

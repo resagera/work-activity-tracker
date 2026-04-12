@@ -546,15 +546,20 @@ func (a *App) EndSession(reason string) tracker.SessionSummary {
 	before := a.tracker.Summary()
 	summary := a.tracker.EndSession(reason)
 	if before.Started && !before.Ended && summary.Started && summary.Ended {
+		windowCount, topWindows, appCount, topApps, metadata := a.tracker.ActivityStats()
 		record := history.SessionRecord{
-			Version:          2,
+			Version:          3,
 			SessionStartedAt: summary.SessionStartedAt,
 			SessionEndedAt:   time.Now(),
 			TotalActive:      int64(summary.TotalActive),
 			TotalInactive:    int64(summary.TotalInactive),
 			TotalAdded:       int64(summary.TotalAdded),
+			WindowCount:      windowCount,
+			AppCount:         appCount,
+			TopWindows:       topWindows,
+			TopApps:          topApps,
 			Periods:          a.enrichHistoryPeriods(a.tracker.HistoryPeriods()),
-			Metadata:         map[string]any{},
+			Metadata:         metadata,
 		}
 		if err := a.history.Save(record, a.continuedFromHistory); err != nil {
 			a.tracker.Logf("history save error: %v", err)

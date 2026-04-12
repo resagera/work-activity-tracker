@@ -3,6 +3,7 @@ package tracker
 import (
 	"fmt"
 	"log"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -26,6 +27,10 @@ type SessionSummary struct {
 	TotalActive            time.Duration           `json:"total_active"`
 	TotalInactive          time.Duration           `json:"total_inactive"`
 	TotalAdded             time.Duration           `json:"total_added"`
+	WindowCount            int                     `json:"window_count,omitempty"`
+	AppCount               int                     `json:"app_count,omitempty"`
+	WindowStats            []history.ActivityStat  `json:"window_stats,omitempty"`
+	AppStats               []history.ActivityStat  `json:"app_stats,omitempty"`
 	Periods                []history.SessionPeriod `json:"periods,omitempty"`
 	CurrentActivityType    string                  `json:"current_activity_type"`
 	CurrentActivityColor   string                  `json:"current_activity_color"`
@@ -76,6 +81,9 @@ type Tracker struct {
 	manualInactiveType  string
 	periods             []history.SessionPeriod
 	currentPeriod       *history.SessionPeriod
+	windowActive        map[string]time.Duration
+	appActive           map[string]time.Duration
+	activeWindowAt      time.Time
 }
 
 func New(cfg config.Config, notifyFn func(title, body string) error) *Tracker {
@@ -85,6 +93,8 @@ func New(cfg config.Config, notifyFn func(title, body string) error) *Tracker {
 		lastStateAt:         now,
 		notifyFn:            notifyFn,
 		currentActivityType: activity.DefaultType(cfg.DefaultActivityType),
+		windowActive:        map[string]time.Duration{},
+		appActive:           map[string]time.Duration{},
 	}
 }
 
@@ -130,6 +140,7 @@ func (t *Tracker) StartWork(reason string) {
 	t.closeInactiveLocked(now)
 	t.running = true
 	t.workStartedAt = now
+	t.activeWindowAt = now
 	t.lastStateAt = now
 	t.warned = false
 
@@ -175,10 +186,14 @@ func (t *Tracker) StartNewDay(reason string) SessionSummary {
 	t.manualInactiveType = ""
 	t.periods = nil
 	t.currentPeriod = nil
+	t.windowActive = map[string]time.Duration{}
+	t.appActive = map[string]time.Duration{}
+	t.activeWindowAt = time.Time{}
 
 	if !t.locked && !t.blockedByWindow {
 		t.running = true
 		t.workStartedAt = now
+		t.activeWindowAt = now
 	} else {
 		t.ensureInactiveStartedLocked(now)
 	}
@@ -233,10 +248,14 @@ func (t *Tracker) ContinueDay(reason string) SessionSummary {
 	t.manualInactiveType = ""
 	t.periods = append([]history.SessionPeriod{}, record.Periods...)
 	t.currentPeriod = nil
+	t.windowActive = history.MetadataUsageMap(record.Metadata, history.MetadataWindowUsageKey)
+	t.appActive = history.MetadataUsageMap(record.Metadata, history.MetadataAppUsageKey)
+	t.activeWindowAt = time.Time{}
 
 	if !t.locked && !t.blockedByWindow {
 		t.running = true
 		t.workStartedAt = now
+		t.activeWindowAt = now
 	} else {
 		t.ensureInactiveStartedLocked(now)
 	}
@@ -273,8 +292,10 @@ func (t *Tracker) StopWork(reason string) {
 	}
 
 	now := time.Now()
+	t.captureActiveWindowLocked(now)
 	t.activeTotal += now.Sub(t.workStartedAt)
 	t.running = false
+	t.activeWindowAt = time.Time{}
 	t.ensureInactiveStartedLocked(now)
 	t.lastStateAt = now
 	t.warned = false
@@ -310,8 +331,10 @@ func (t *Tracker) SetManualPause(paused bool) {
 	now := time.Now()
 	if paused {
 		if t.running {
+			t.captureActiveWindowLocked(now)
 			t.activeTotal += now.Sub(t.workStartedAt)
 			t.running = false
+			t.activeWindowAt = time.Time{}
 		}
 		t.pausedManually = true
 		if strings.TrimSpace(t.manualInactiveType) == "" {
@@ -325,6 +348,7 @@ func (t *Tracker) SetManualPause(paused bool) {
 			t.closeInactiveLocked(now)
 			t.running = true
 			t.workStartedAt = now
+			t.activeWindowAt = now
 		}
 		msg = "▶️ Ручная пауза снята"
 	}
@@ -488,8 +512,10 @@ func (t *Tracker) EndSession(reason string) SessionSummary {
 	now := time.Now()
 	if t.started && !t.ended {
 		if t.running {
+			t.captureActiveWindowLocked(now)
 			t.activeTotal += now.Sub(t.workStartedAt)
 			t.running = false
+			t.activeWindowAt = time.Time{}
 		} else {
 			t.ensureInactiveStartedLocked(now)
 		}
@@ -528,6 +554,22 @@ func (t *Tracker) HistoryPeriods() []history.SessionPeriod {
 	t.syncPeriodLocked(now)
 	out := append([]history.SessionPeriod{}, t.periods...)
 	return out
+}
+
+func (t *Tracker) ActivityStats() (int, []history.ActivityStat, int, []history.ActivityStat, map[string]any) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	now := time.Now()
+	t.captureActiveWindowLocked(now)
+	totalActive := t.currentActiveLocked(now)
+	windowMap := copyDurationMap(t.windowActive)
+	appMap := copyDurationMap(t.appActive)
+
+	return len(windowMap), buildTopStats(windowMap, totalActive), len(appMap), buildTopStats(appMap, totalActive), map[string]any{
+		history.MetadataWindowUsageKey: durationMapToNS(windowMap),
+		history.MetadataAppUsageKey:    durationMapToNS(appMap),
+	}
 }
 
 func (t *Tracker) HandleActivity(idle time.Duration) {
@@ -629,11 +671,17 @@ func (t *Tracker) SetActiveWindowInfo(info platform.WindowInfo) {
 	prevBlocked := t.blockedByWindow
 	prevID := t.windowInfo.WindowID
 	prevTitle := t.windowInfo.Title
+	prevClass := t.windowInfo.WMClass
+	started := t.started
+	ended := t.ended
+	now := time.Now()
+
+	if started && !ended && t.running && (info.WindowID != prevID || info.Title != prevTitle || info.WMClass != prevClass) {
+		t.captureActiveWindowLocked(now)
+	}
 
 	t.windowInfo = info
 	t.blockedByWindow = info.BlockedByRule
-	started := t.started
-	ended := t.ended
 
 	if started && !ended && info.BlockedByRule && !prevBlocked {
 		logMsg = fmt.Sprintf(
@@ -649,7 +697,6 @@ func (t *Tracker) SetActiveWindowInfo(info platform.WindowInfo) {
 			needStop = true
 			stopReason = "активно исключенное окно"
 		} else {
-			now := time.Now()
 			t.ensureInactiveStartedLocked(now)
 			t.lastStateAt = now
 			t.syncPeriodLocked(now)
@@ -664,10 +711,13 @@ func (t *Tracker) SetActiveWindowInfo(info platform.WindowInfo) {
 		}
 	}
 
-	if !info.BlockedByRule && !prevBlocked && (info.WindowID != prevID || info.Title != prevTitle) {
-		t.lastStateAt = time.Now()
+	if !info.BlockedByRule && !prevBlocked && (info.WindowID != prevID || info.Title != prevTitle || info.WMClass != prevClass) {
+		t.lastStateAt = now
 	}
-	t.syncPeriodLocked(time.Now())
+	if started && !ended && t.running {
+		t.activeWindowAt = now
+	}
+	t.syncPeriodLocked(now)
 
 	t.mu.Unlock()
 
@@ -819,9 +869,36 @@ func (t *Tracker) currentInactiveLocked(now time.Time) time.Duration {
 	return total
 }
 
+func (t *Tracker) captureActiveWindowLocked(now time.Time) {
+	if !t.running || t.activeWindowAt.IsZero() {
+		return
+	}
+	d := now.Sub(t.activeWindowAt)
+	if d <= 0 {
+		t.activeWindowAt = now
+		return
+	}
+
+	windowName := strings.TrimSpace(t.windowInfo.Title)
+	if windowName == "" {
+		windowName = "(без заголовка)"
+	}
+	appName := strings.TrimSpace(t.windowInfo.WMClass)
+	if appName == "" {
+		appName = "(неизвестно)"
+	}
+
+	t.windowActive[windowName] += d
+	t.appActive[appName] += d
+	t.activeWindowAt = now
+}
+
 func (t *Tracker) summaryLocked(now time.Time) SessionSummary {
 	t.syncPeriodLocked(now)
+	t.captureActiveWindowLocked(now)
 	periods := append([]history.SessionPeriod{}, t.periods...)
+	windowMap := copyDurationMap(t.windowActive)
+	appMap := copyDurationMap(t.appActive)
 	return SessionSummary{
 		Started:                t.started,
 		CanContinueDay:         t.resumeRecord != nil,
@@ -829,6 +906,10 @@ func (t *Tracker) summaryLocked(now time.Time) SessionSummary {
 		TotalActive:            t.currentActiveLocked(now),
 		TotalInactive:          t.currentInactiveLocked(now),
 		TotalAdded:             t.manualAdded,
+		WindowCount:            len(windowMap),
+		AppCount:               len(appMap),
+		WindowStats:            buildUsageStats(windowMap),
+		AppStats:               buildUsageStats(appMap),
 		Periods:                periods,
 		CurrentActivityType:    t.currentActivityTypeLocked(),
 		CurrentActivityColor:   t.currentActivityColorLocked(),
@@ -844,6 +925,74 @@ func (t *Tracker) summaryLocked(now time.Time) SessionSummary {
 
 		Window: t.windowInfo,
 	}
+}
+
+func copyDurationMap(items map[string]time.Duration) map[string]time.Duration {
+	out := make(map[string]time.Duration, len(items))
+	for k, v := range items {
+		out[k] = v
+	}
+	return out
+}
+
+func durationMapToNS(items map[string]time.Duration) map[string]int64 {
+	out := make(map[string]int64, len(items))
+	for k, v := range items {
+		out[k] = int64(v)
+	}
+	return out
+}
+
+func buildTopStats(items map[string]time.Duration, total time.Duration) []history.ActivityStat {
+	if total <= 0 || len(items) == 0 {
+		return nil
+	}
+
+	stats := make([]history.ActivityStat, 0, len(items))
+	for name, d := range items {
+		percent := float64(d) * 100 / float64(total)
+		if percent <= 5 {
+			continue
+		}
+		stats = append(stats, history.ActivityStat{
+			Name:     name,
+			ActiveNS: int64(d),
+			Percent:  percent,
+		})
+	}
+
+	sort.Slice(stats, func(i, j int) bool {
+		if stats[i].ActiveNS == stats[j].ActiveNS {
+			return stats[i].Name < stats[j].Name
+		}
+		return stats[i].ActiveNS > stats[j].ActiveNS
+	})
+	if len(stats) > 10 {
+		stats = stats[:10]
+	}
+	return stats
+}
+
+func buildUsageStats(items map[string]time.Duration) []history.ActivityStat {
+	if len(items) == 0 {
+		return nil
+	}
+
+	stats := make([]history.ActivityStat, 0, len(items))
+	for name, d := range items {
+		stats = append(stats, history.ActivityStat{
+			Name:     name,
+			ActiveNS: int64(d),
+		})
+	}
+
+	sort.Slice(stats, func(i, j int) bool {
+		if stats[i].ActiveNS == stats[j].ActiveNS {
+			return stats[i].Name < stats[j].Name
+		}
+		return stats[i].ActiveNS > stats[j].ActiveNS
+	})
+	return stats
 }
 
 func (t *Tracker) currentActivityTypeLocked() string {
