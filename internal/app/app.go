@@ -25,6 +25,7 @@ type App struct {
 	cfg                   config.Config
 	env                   platform.Environment
 	tracker               *tracker.Tracker
+	telegramNotifier      interface{ SendOrReplaceControls() }
 	history               *history.Store
 	activityTypes         *activity.Store
 	customActivityTypes   []activity.TypeDefinition
@@ -58,10 +59,11 @@ func (a *App) Run(ctx context.Context) error {
 	}
 
 	if a.cfg.TelegramToken != "" && a.cfg.TelegramChatID != 0 {
-		notifier, err := telegram.New(a.cfg.TelegramToken, a.cfg.TelegramChatID, a)
+		notifier, err := telegram.New(a.cfg.TelegramToken, a.cfg.TelegramChatID, a.cfg.TelegramControlsOnly, a)
 		if err != nil {
 			return fmt.Errorf("telegram init: %w", err)
 		}
+		a.telegramNotifier = notifier
 		a.tracker.SetNotifier(notifier)
 		notifier.SendOrReplaceControls()
 		go notifier.Run(ctx)
@@ -84,6 +86,9 @@ func (a *App) Run(ctx context.Context) error {
 
 	<-ctx.Done()
 	summary := a.EndSession("остановка программы")
+	if a.telegramNotifier != nil {
+		a.telegramNotifier.SendOrReplaceControls()
+	}
 	printSessionSummary(summary)
 	return nil
 }

@@ -52,6 +52,7 @@ func (d Duration) MarshalJSON() ([]byte, error) {
 type Config struct {
 	TelegramToken                 string   `json:"telegram_token"`
 	TelegramChatID                int64    `json:"telegram_chat_id"`
+	TelegramControlsOnly          bool     `json:"telegram_controls_only"`
 	HTTPPort                      int      `json:"http_port"`
 	AutoStartDay                  bool     `json:"auto_start_day"`
 	EnableDesktopNotifications    bool     `json:"enable_desktop_notifications"`

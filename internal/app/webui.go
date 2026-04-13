@@ -372,7 +372,7 @@ const webUIHTML = `<!doctype html>
       margin-top: 10px;
       display: grid;
       gap: 10px;
-      max-height: 420px;
+      max-height: 1420px;
       overflow: auto;
       padding-right: 4px;
     }

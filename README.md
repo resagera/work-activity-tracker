@@ -152,6 +152,7 @@ go build -o ./bin/work-activity-tracker-tray ./cmd/tracker-tray-linux-x11
 {
   "telegram_token": "",
   "telegram_chat_id": 0,
+  "telegram_controls_only": false,
   "http_port": 8080,
   "auto_start_day": true,
   "enable_desktop_notifications": true,
@@ -176,6 +177,7 @@ go build -o ./bin/work-activity-tracker-tray ./cmd/tracker-tray-linux-x11
 
 * `telegram_token` — токен Telegram-бота. Если пустой, бот не запускается.
 * `telegram_chat_id` — ID чата для сообщений и управления.
+* `telegram_controls_only` — если `true`, бот не отправляет отдельные лог-сообщения и обновляет только одно сообщение состояния с кнопками.
 * `http_port` — порт HTTP API. Если `0`, API не запускается.
 * `auto_start_day` — автоматически начинать новый день при старте программы. Если `false`, программа запускается в состоянии "день не начат".
 * `enable_desktop_notifications` — включить системные уведомления перед автопаузой. Если `false`, уведомления через `notify-send` не показываются.
@@ -421,7 +423,7 @@ Web UI отдается тем же HTTP сервером, что и API.
 
 * отправляет и обновляет сообщение состояния;
 * показывает inline-кнопки;
-* отправляет логи;
+* опционально отправляет логи;
 * умеет добавлять время;
 * умеет завершать день.
 

@@ -29,27 +29,32 @@ type appController interface {
 }
 
 type Notifier struct {
-	bot    *tgbotapi.BotAPI
-	chatID int64
-	app    appController
+	bot          *tgbotapi.BotAPI
+	chatID       int64
+	app          appController
+	controlsOnly bool
 
 	mu                sync.Mutex
 	controlsMessageID int
 }
 
-func New(token string, chatID int64, controller appController) (*Notifier, error) {
+func New(token string, chatID int64, controlsOnly bool, controller appController) (*Notifier, error) {
 	bot, err := tgbotapi.NewBotAPI(token)
 	if err != nil {
 		return nil, err
 	}
 	return &Notifier{
-		bot:    bot,
-		chatID: chatID,
-		app:    controller,
+		bot:          bot,
+		chatID:       chatID,
+		app:          controller,
+		controlsOnly: controlsOnly,
 	}, nil
 }
 
 func (n *Notifier) SendLog(text string) {
+	if n.controlsOnly {
+		return
+	}
 	msg := tgbotapi.NewMessage(n.chatID, text)
 	_, _ = n.bot.Send(msg)
 }
