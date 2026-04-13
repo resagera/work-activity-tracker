@@ -244,6 +244,20 @@ const webUIHTML = `<!doctype html>
       gap: 8px;
       margin-top: 10px;
     }
+    .type-group {
+      margin-top: 14px;
+      padding: 14px;
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      background: color-mix(in srgb, var(--card) 84%, #fff 16%);
+    }
+    .type-group-title {
+      margin: 0 0 10px;
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--muted);
+    }
     .type-chip {
       display: inline-flex;
       align-items: center;
@@ -467,8 +481,14 @@ const webUIHTML = `<!doctype html>
           <button class="warn" id="btn-sub-30">-30м</button>
           <button class="warn" id="btn-sub-60">-1ч</button>
         </div>
-        <div class="type-buttons" id="activity-type-buttons"></div>
-        <div class="type-buttons" id="inactivity-type-buttons"></div>
+        <div class="type-group">
+          <div class="type-group-title">Активность</div>
+          <div class="type-buttons" id="activity-type-buttons"></div>
+        </div>
+        <div class="type-group">
+          <div class="type-group-title">Неактивность</div>
+          <div class="type-buttons" id="inactivity-type-buttons"></div>
+        </div>
         <div id="settings-panel" class="settings-panel is-hidden">
           <div class="row">
             <button class="secondary" id="btn-refresh">Обновить</button>
@@ -651,11 +671,11 @@ const webUIHTML = `<!doctype html>
         const button = document.createElement("button");
         button.type = "button";
         button.className = "type-chip" + (item.name === selectedName ? " is-active" : "");
-        button.disabled = !(state.status?.started && !state.status?.ended && state.status?.paused_manually);
+        button.disabled = !(state.status?.started && !state.status?.ended);
         button.innerHTML =
           '<span class="type-chip-color" style="background:' + escapeHtml(item.color || "var(--line)") + ';"></span>' +
           '<span>' + escapeHtml(item.name) + '</span>';
-        button.onclick = () => setCurrentInactivityType(item.name);
+        button.onclick = () => activateInactivityType(item.name);
         root.appendChild(button);
       });
     }
@@ -977,6 +997,23 @@ const webUIHTML = `<!doctype html>
         return;
       }
       try {
+        await api("/inactivity-type/set?name=" + encodeURIComponent(name), { method: "POST" });
+        state.selectedInactivityType = name;
+        await refreshAll();
+      } catch (err) {
+        setMessage(err.message || String(err), true);
+      }
+    }
+
+    async function activateInactivityType(name) {
+      if (!name) {
+        setMessage("Выберите тип неактивности", true);
+        return;
+      }
+      try {
+        if (!(state.status?.paused_manually)) {
+          await api("/pause", { method: "POST" });
+        }
         await api("/inactivity-type/set?name=" + encodeURIComponent(name), { method: "POST" });
         state.selectedInactivityType = name;
         await refreshAll();
