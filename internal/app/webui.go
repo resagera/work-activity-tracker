@@ -91,6 +91,12 @@ const webUIHTML = `<!doctype html>
       gap: 10px;
       margin-bottom: 18px;
     }
+    .session-name-display {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
     .session-name-title {
       font-size: 22px;
       font-weight: 700;
@@ -104,6 +110,17 @@ const webUIHTML = `<!doctype html>
     .session-name-form input {
       flex: 1 1 280px;
       min-width: 0;
+    }
+    .icon-button {
+      min-width: 42px;
+      width: 42px;
+      height: 42px;
+      padding: 0;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 18px;
+      line-height: 1;
     }
     .pill {
       display: inline-flex;
@@ -470,8 +487,11 @@ const webUIHTML = `<!doctype html>
       <section class="card">
         <div class="status-line">
           <div class="session-name-block">
-            <div class="session-name-title" id="session-name-title">Сессия</div>
-            <div class="session-name-form">
+            <div class="session-name-display">
+              <div class="session-name-title" id="session-name-title">Сессия</div>
+              <button class="ghost icon-button" id="btn-edit-session-name" title="Изменить имя">&#9998;</button>
+            </div>
+            <div class="session-name-form is-hidden" id="session-name-form">
               <input id="session-name-input" placeholder="Имя текущей сессии">
               <button class="ghost" id="btn-set-session-name">Сохранить имя</button>
             </div>
@@ -873,6 +893,7 @@ const webUIHTML = `<!doctype html>
       el("btn-set-activity-color").disabled = !state.selectedActivityType;
       el("btn-set-inactivity-color").disabled = !state.selectedInactivityType;
       el("btn-set-session-name").disabled = !s.started || s.ended;
+      el("btn-edit-session-name").disabled = !s.started || s.ended;
       renderActivityTypeButtons(state.activityTypes, state.selectedActivityType);
       renderInactivityTypeButtons(state.inactivityTypes, state.selectedInactivityType);
     }
@@ -928,17 +949,18 @@ const webUIHTML = `<!doctype html>
 
         node.innerHTML =
           '<div class="history-summary">' +
-            '<div class="history-edit-row">' +
-              '<input class="history-name-input" value="' + escapeHtml(sessionName) + '">' +
-              '<button class="ghost history-name-save">Сохранить имя</button>' +
-            '</div>' +
             '<div class="history-top">' +
               '<div class="history-top-main">' +
                 '<span class="history-session-name">' + escapeHtml(sessionName) + '</span>' +
+                '<button class="ghost icon-button history-name-edit" title="Изменить имя">&#9998;</button>' +
               '</div>' +
               '<div class="history-top-times">' +
                 new Date(item.session_started_at).toLocaleString() + ' - ' + new Date(item.session_ended_at).toLocaleString() +
               '</div>' +
+            '</div>' +
+            '<div class="history-edit-row is-hidden">' +
+              '<input class="history-name-input" value="' + escapeHtml(sessionName) + '">' +
+              '<button class="ghost history-name-save">Сохранить имя</button>' +
             '</div>' +
             '<div class="history-metrics">' +
               '<strong>Активность: ' + formatDurationFromNs(item.total_active) + '</strong>' +
@@ -956,12 +978,23 @@ const webUIHTML = `<!doctype html>
           (periods.length ? '<div class="history-periods is-hidden">' + periodsHtml + '</div>' : '');
         const toggle = node.querySelector(".history-link");
         const body = node.querySelector(".history-periods");
+        const editButton = node.querySelector(".history-name-edit");
+        const editRow = node.querySelector(".history-edit-row");
         const saveButton = node.querySelector(".history-name-save");
         const nameInput = node.querySelector(".history-name-input");
         if (toggle && body) {
           toggle.onclick = () => {
             body.classList.toggle("is-hidden");
             toggle.textContent = body.classList.contains("is-hidden") ? "(показать)" : "(скрыть)";
+          };
+        }
+        if (editButton && editRow && nameInput) {
+          editButton.onclick = () => {
+            editRow.classList.toggle("is-hidden");
+            if (!editRow.classList.contains("is-hidden")) {
+              nameInput.focus();
+              nameInput.select();
+            }
           };
         }
         if (saveButton && nameInput) {
@@ -1156,6 +1189,15 @@ const webUIHTML = `<!doctype html>
       el("btn-settings").textContent = panel.classList.contains("is-hidden") ? "Настройки" : "Скрыть настройки";
     }
 
+    function toggleSessionNameEdit() {
+      const form = el("session-name-form");
+      form.classList.toggle("is-hidden");
+      if (!form.classList.contains("is-hidden")) {
+        el("session-name-input").focus();
+        el("session-name-input").select();
+      }
+    }
+
     el("btn-refresh").onclick = () => refreshAll(true);
     el("btn-start").onclick = () => doAction("/start");
     el("btn-pause").onclick = () => doAction("/pause");
@@ -1176,6 +1218,7 @@ const webUIHTML = `<!doctype html>
     el("btn-set-activity-color").onclick = setActivityTypeColor;
     el("btn-add-inactivity-type").onclick = addInactivityType;
     el("btn-set-inactivity-color").onclick = setInactivityTypeColor;
+    el("btn-edit-session-name").onclick = toggleSessionNameEdit;
     el("btn-set-session-name").onclick = setSessionName;
     el("current-periods-toggle").onclick = () => {
       const body = el("current-periods-list");
