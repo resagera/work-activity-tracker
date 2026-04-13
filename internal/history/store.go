@@ -30,6 +30,7 @@ type ActivityStat struct {
 
 type SessionRecord struct {
 	Version          int             `json:"version,omitempty"`
+	SessionName      string          `json:"session_name,omitempty"`
 	SessionStartedAt time.Time       `json:"session_started_at"`
 	SessionEndedAt   time.Time       `json:"session_ended_at"`
 	TotalActive      int64           `json:"total_active"`
@@ -114,6 +115,25 @@ func (s *Store) Save(record SessionRecord, replaceLast bool) error {
 	}
 
 	return s.writeAllLocked(records)
+}
+
+func (s *Store) RenameByStartedAt(startedAt time.Time, name string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	records, err := s.loadAllLocked()
+	if err != nil {
+		return err
+	}
+
+	for i := range records {
+		if records[i].SessionStartedAt.Equal(startedAt) {
+			records[i].SessionName = name
+			return s.writeAllLocked(records)
+		}
+	}
+
+	return os.ErrNotExist
 }
 
 func (s *Store) loadAllLocked() ([]SessionRecord, error) {

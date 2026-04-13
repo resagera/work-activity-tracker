@@ -86,6 +86,25 @@ const webUIHTML = `<!doctype html>
       align-items: center;
       margin-bottom: 18px;
     }
+    .session-name-block {
+      display: grid;
+      gap: 10px;
+      margin-bottom: 18px;
+    }
+    .session-name-title {
+      font-size: 22px;
+      font-weight: 700;
+      letter-spacing: -0.03em;
+    }
+    .session-name-form {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+    .session-name-form input {
+      flex: 1 1 280px;
+      min-width: 0;
+    }
     .pill {
       display: inline-flex;
       align-items: center;
@@ -357,6 +376,33 @@ const webUIHTML = `<!doctype html>
       font-size: 13px;
       color: var(--muted);
     }
+    .history-top-main {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      min-width: 0;
+      flex-wrap: wrap;
+    }
+    .history-session-name {
+      font-size: 15px;
+      font-weight: 600;
+      color: var(--ink);
+    }
+    .history-top-times {
+      margin-left: auto;
+      text-align: right;
+      white-space: nowrap;
+    }
+    .history-edit-row {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      margin-bottom: 10px;
+    }
+    .history-edit-row input {
+      flex: 1 1 240px;
+      min-width: 0;
+    }
     .history-metrics {
       display: flex;
       flex-wrap: wrap;
@@ -422,6 +468,16 @@ const webUIHTML = `<!doctype html>
 
     <div class="grid">
       <section class="card">
+        <div class="status-line">
+          <div class="session-name-block">
+            <div class="session-name-title" id="session-name-title">Сессия</div>
+            <div class="session-name-form">
+              <input id="session-name-input" placeholder="Имя текущей сессии">
+              <button class="ghost" id="btn-set-session-name">Сохранить имя</button>
+            </div>
+          </div>
+        </div>
+
         <div class="status-line">
           <div class="pill"><span class="dot" id="state-dot"></span><span id="state-text">Загрузка...</span></div>
           <div class="pill">Старт дня: <strong id="started-at">-</strong></div>
@@ -773,8 +829,14 @@ const webUIHTML = `<!doctype html>
       return "#c96c2b";
     }
 
+    function historySessionName(item) {
+      return item.session_name || "Сессия";
+    }
+
     function renderStatus(s) {
       state.status = s;
+      setText("session-name-title", s.session_name || "Сессия");
+      el("session-name-input").value = s.session_name || "";
       setText("state-text", stateText(s));
       el("state-dot").style.background = stateColor(s);
       setText("started-at", s.started ? new Date(s.session_started_at).toLocaleString() : "-");
@@ -810,6 +872,7 @@ const webUIHTML = `<!doctype html>
       el("btn-continue-day").disabled = !(s.can_continue_day && (!s.started || s.ended));
       el("btn-set-activity-color").disabled = !state.selectedActivityType;
       el("btn-set-inactivity-color").disabled = !state.selectedInactivityType;
+      el("btn-set-session-name").disabled = !s.started || s.ended;
       renderActivityTypeButtons(state.activityTypes, state.selectedActivityType);
       renderInactivityTypeButtons(state.inactivityTypes, state.selectedInactivityType);
     }
@@ -861,12 +924,21 @@ const webUIHTML = `<!doctype html>
         const periods = Array.isArray(item.periods) ? item.periods : [];
         const periodsHtml = buildPeriodsList(periods, "Нет данных по периодам");
         const stripHtml = buildPeriodStrip(periods, "Нет данных по периодам");
+        const sessionName = historySessionName(item);
 
         node.innerHTML =
           '<div class="history-summary">' +
+            '<div class="history-edit-row">' +
+              '<input class="history-name-input" value="' + escapeHtml(sessionName) + '">' +
+              '<button class="ghost history-name-save">Сохранить имя</button>' +
+            '</div>' +
             '<div class="history-top">' +
-              '<span>' + new Date(item.session_started_at).toLocaleString() + '</span>' +
-              '<span>' + new Date(item.session_ended_at).toLocaleString() + '</span>' +
+              '<div class="history-top-main">' +
+                '<span class="history-session-name">' + escapeHtml(sessionName) + '</span>' +
+              '</div>' +
+              '<div class="history-top-times">' +
+                new Date(item.session_started_at).toLocaleString() + ' - ' + new Date(item.session_ended_at).toLocaleString() +
+              '</div>' +
             '</div>' +
             '<div class="history-metrics">' +
               '<strong>Активность: ' + formatDurationFromNs(item.total_active) + '</strong>' +
@@ -884,10 +956,22 @@ const webUIHTML = `<!doctype html>
           (periods.length ? '<div class="history-periods is-hidden">' + periodsHtml + '</div>' : '');
         const toggle = node.querySelector(".history-link");
         const body = node.querySelector(".history-periods");
+        const saveButton = node.querySelector(".history-name-save");
+        const nameInput = node.querySelector(".history-name-input");
         if (toggle && body) {
           toggle.onclick = () => {
             body.classList.toggle("is-hidden");
             toggle.textContent = body.classList.contains("is-hidden") ? "(показать)" : "(скрыть)";
+          };
+        }
+        if (saveButton && nameInput) {
+          saveButton.onclick = async () => {
+            try {
+              await api("/history/session-name?started_at=" + encodeURIComponent(item.session_started_at) + "&name=" + encodeURIComponent(nameInput.value.trim()), { method: "POST" });
+              await refreshAll();
+            } catch (err) {
+              setMessage(err.message || String(err), true);
+            }
           };
         }
         root.appendChild(node);
@@ -1052,6 +1136,20 @@ const webUIHTML = `<!doctype html>
       }
     }
 
+    async function setSessionName() {
+      const name = el("session-name-input").value.trim();
+      if (!name) {
+        setMessage("Введите имя сессии", true);
+        return;
+      }
+      try {
+        await api("/session-name?name=" + encodeURIComponent(name), { method: "POST" });
+        await refreshAll();
+      } catch (err) {
+        setMessage(err.message || String(err), true);
+      }
+    }
+
     function toggleSettings() {
       const panel = el("settings-panel");
       panel.classList.toggle("is-hidden");
@@ -1078,6 +1176,7 @@ const webUIHTML = `<!doctype html>
     el("btn-set-activity-color").onclick = setActivityTypeColor;
     el("btn-add-inactivity-type").onclick = addInactivityType;
     el("btn-set-inactivity-color").onclick = setInactivityTypeColor;
+    el("btn-set-session-name").onclick = setSessionName;
     el("current-periods-toggle").onclick = () => {
       const body = el("current-periods-list");
       if (!body || !body.innerHTML.trim()) {

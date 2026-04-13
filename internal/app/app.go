@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -117,9 +118,42 @@ func (a *App) runHTTP(ctx context.Context) {
 			return
 		}
 		for i := range records {
+			records[i].SessionName = a.historySessionName(records[i])
 			records[i].Periods = a.enrichHistoryPeriods(records[i].Periods)
 		}
 		writeJSON(w, http.StatusOK, records)
+	})
+
+	mux.HandleFunc("/session-name", func(w http.ResponseWriter, r *http.Request) {
+		name := r.URL.Query().Get("name")
+		if err := a.SetSessionName(name); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusOK, a.Summary())
+	})
+
+	mux.HandleFunc("/history/session-name", func(w http.ResponseWriter, r *http.Request) {
+		startedAtStr := r.URL.Query().Get("started_at")
+		name := r.URL.Query().Get("name")
+		if startedAtStr == "" {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "started_at is required"})
+			return
+		}
+		startedAt, err := time.Parse(time.RFC3339, startedAtStr)
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "started_at must be RFC3339"})
+			return
+		}
+		if err := a.RenameHistorySession(startedAt, name); err != nil {
+			status := http.StatusBadRequest
+			if errors.Is(err, errSessionNotFound) {
+				status = http.StatusNotFound
+			}
+			writeJSON(w, status, map[string]string{"error": err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]string{"ok": "true"})
 	})
 
 	mux.HandleFunc("/activity-types", func(w http.ResponseWriter, r *http.Request) {
@@ -391,6 +425,7 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 
 func (a *App) Summary() tracker.SessionSummary {
 	s := a.tracker.Summary()
+	s.SessionName = a.currentSessionName(s)
 	s.Periods = a.enrichHistoryPeriods(s.Periods)
 	s.CurrentActivityColor = activity.FindColor(a.ActivityTypeDefinitions(), s.CurrentActivityType)
 	s.CurrentInactivityColor = inactivity.FindColor(a.InactivityTypeDefinitions(), s.CurrentInactivityType)
@@ -529,6 +564,20 @@ func (a *App) SetManualPause(paused bool) {
 	a.tracker.SetManualPause(paused)
 }
 
+func (a *App) SetSessionName(name string) error {
+	name = strings.TrimSpace(name)
+	if err := a.tracker.SetSessionName(name); err != nil {
+		return err
+	}
+	if a.continuedFromHistory {
+		s := a.tracker.Summary()
+		if err := a.history.RenameByStartedAt(s.SessionStartedAt, name); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+	}
+	return nil
+}
+
 func (a *App) StartNewDay(reason string) tracker.SessionSummary {
 	a.continuedFromHistory = false
 	a.tracker.SetResumeRecord(nil)
@@ -549,6 +598,7 @@ func (a *App) EndSession(reason string) tracker.SessionSummary {
 		windowCount, topWindows, appCount, topApps, metadata := a.tracker.ActivityStats()
 		record := history.SessionRecord{
 			Version:          3,
+			SessionName:      a.currentSessionName(summary),
 			SessionStartedAt: summary.SessionStartedAt,
 			SessionEndedAt:   time.Now(),
 			TotalActive:      int64(summary.TotalActive),
@@ -582,6 +632,25 @@ func (a *App) loadResumeCandidate() error {
 	}
 	if canContinueDay(record, time.Now()) {
 		a.tracker.SetResumeRecord(record)
+	}
+	return nil
+}
+
+var errSessionNotFound = errors.New("session not found")
+
+func (a *App) RenameHistorySession(startedAt time.Time, name string) error {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return fmt.Errorf("session name is required")
+	}
+	if err := a.history.RenameByStartedAt(startedAt, name); err != nil {
+		if errors.Is(err, errSessionNotFound) {
+			return err
+		}
+		if errors.Is(err, os.ErrNotExist) {
+			return errSessionNotFound
+		}
+		return err
 	}
 	return nil
 }
@@ -651,4 +720,21 @@ func contains(items []string, target string) bool {
 		}
 	}
 	return false
+}
+
+func (a *App) currentSessionName(s tracker.SessionSummary) string {
+	if strings.TrimSpace(s.SessionName) != "" {
+		return s.SessionName
+	}
+	if s.SessionStartedAt.IsZero() {
+		return ""
+	}
+	return "Сессия " + s.SessionStartedAt.Format("2006-01-02 15:04")
+}
+
+func (a *App) historySessionName(record history.SessionRecord) string {
+	if strings.TrimSpace(record.SessionName) != "" {
+		return record.SessionName
+	}
+	return "Сессия"
 }

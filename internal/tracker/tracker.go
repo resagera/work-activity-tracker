@@ -23,6 +23,7 @@ type Notifier interface {
 type SessionSummary struct {
 	Started                bool                    `json:"started"`
 	CanContinueDay         bool                    `json:"can_continue_day"`
+	SessionName            string                  `json:"session_name"`
 	SessionStartedAt       time.Time               `json:"session_started_at"`
 	TotalActive            time.Duration           `json:"total_active"`
 	TotalInactive          time.Duration           `json:"total_inactive"`
@@ -77,6 +78,7 @@ type Tracker struct {
 	notifyFn func(title, body string) error
 
 	resumeRecord        *history.SessionRecord
+	sessionName         string
 	currentActivityType string
 	manualInactiveType  string
 	periods             []history.SessionPeriod
@@ -171,6 +173,7 @@ func (t *Tracker) StartNewDay(reason string) SessionSummary {
 
 	t.started = true
 	t.sessionStartedAt = now
+	t.sessionName = defaultSessionName(now)
 	t.lastStateAt = now
 	t.running = false
 	t.workStartedAt = time.Time{}
@@ -233,6 +236,7 @@ func (t *Tracker) ContinueDay(reason string) SessionSummary {
 	record := *t.resumeRecord
 	t.started = true
 	t.sessionStartedAt = record.SessionStartedAt
+	t.sessionName = EmptyFallback(record.SessionName, defaultSessionName(record.SessionStartedAt))
 	t.lastStateAt = now
 	t.running = false
 	t.workStartedAt = time.Time{}
@@ -418,6 +422,33 @@ func (t *Tracker) SetCurrentActivityType(name string) error {
 	t.mu.Unlock()
 
 	msg := fmt.Sprintf("🏷 Установлен тип активности: %s", name)
+	log.Println(msg)
+	if notifier != nil {
+		notifier.SendLog(msg)
+		notifier.RefreshControls()
+	}
+	return nil
+}
+
+func (t *Tracker) SetSessionName(name string) error {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return fmt.Errorf("session name is required")
+	}
+
+	var notifier Notifier
+
+	t.mu.Lock()
+	if !t.started || t.ended {
+		t.mu.Unlock()
+		return fmt.Errorf("session is not active")
+	}
+	t.sessionName = name
+	t.lastStateAt = time.Now()
+	notifier = t.notifier
+	t.mu.Unlock()
+
+	msg := fmt.Sprintf("🏷 Установлено имя сессии: %s", name)
 	log.Println(msg)
 	if notifier != nil {
 		notifier.SendLog(msg)
@@ -902,6 +933,7 @@ func (t *Tracker) summaryLocked(now time.Time) SessionSummary {
 	return SessionSummary{
 		Started:                t.started,
 		CanContinueDay:         t.resumeRecord != nil,
+		SessionName:            t.sessionName,
 		SessionStartedAt:       t.sessionStartedAt,
 		TotalActive:            t.currentActiveLocked(now),
 		TotalInactive:          t.currentInactiveLocked(now),
@@ -925,6 +957,13 @@ func (t *Tracker) summaryLocked(now time.Time) SessionSummary {
 
 		Window: t.windowInfo,
 	}
+}
+
+func defaultSessionName(startedAt time.Time) string {
+	if startedAt.IsZero() {
+		return "Сессия"
+	}
+	return "Сессия " + startedAt.Format("2006-01-02 15:04")
 }
 
 func copyDurationMap(items map[string]time.Duration) map[string]time.Duration {

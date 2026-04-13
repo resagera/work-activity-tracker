@@ -24,7 +24,7 @@ type TypeDefinition struct {
 
 var BuiltinTypes = []TypeDefinition{
 	{Name: TypeManualPause, Color: "#c96c2b"},
-	{Name: TypeIdle, Color: "#b49a5a"},
+	{Name: TypeIdle, Color: "#ffe876"},
 	{Name: TypeLocked, Color: "#5c6b7a"},
 	{Name: TypeBlockedWindow, Color: "#b42318"},
 }
