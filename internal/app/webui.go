@@ -14,6 +14,7 @@ const webUIHTML = `<!doctype html>
       --muted: #6d675f;
       --line: #d9cfbf;
       --accent: #0d7a5f;
+      --settings-bg: #0d7a5f;
       --accent-2: #c96c2b;
       --danger: #b42318;
       --shadow: 0 18px 50px rgba(37, 27, 8, 0.08);
@@ -364,6 +365,7 @@ const webUIHTML = `<!doctype html>
     }
     button:hover { transform: translateY(-1px); }
     button.secondary { background: var(--accent); }
+    button.settings { background: var(--settings-bg); }
     button.ghost { background: color-mix(in srgb, var(--card) 88%, #d9c8ad 12%); color: var(--ink); }
     button.warn { background: var(--accent-2); }
     button.danger { background: var(--danger); }

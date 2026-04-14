@@ -13,8 +13,16 @@
   "idle_warn_after": "2m",
   "stop_after_warn": "1m",
   "poll_interval": "5s",
-  "excluded_window_substrings": [
-    "telegram",
-    "youtube"
+  "excluded": [
+    {
+      "tag": "telegram",
+      "type": "title",
+      "exclude": null
+    },
+    {
+      "tag": "youtube",
+      "type": "title",
+      "exclude": null
+    }
   ]
 }

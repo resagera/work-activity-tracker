@@ -21,6 +21,12 @@ type Duration struct {
 	time.Duration
 }
 
+type ExcludedRule struct {
+	Tag     string        `json:"tag"`
+	Type    string        `json:"type"`
+	Exclude *ExcludedRule `json:"exclude,omitempty"`
+}
+
 func (d *Duration) UnmarshalJSON(b []byte) error {
 	if string(b) == "null" {
 		return nil
@@ -50,24 +56,25 @@ func (d Duration) MarshalJSON() ([]byte, error) {
 }
 
 type Config struct {
-	TelegramToken                 string   `json:"telegram_token"`
-	TelegramChatID                int64    `json:"telegram_chat_id"`
-	TelegramControlsOnly          bool     `json:"telegram_controls_only"`
-	HTTPPort                      int      `json:"http_port"`
-	AutoStartDay                  bool     `json:"auto_start_day"`
-	EnableDesktopNotifications    bool     `json:"enable_desktop_notifications"`
-	HistoryFile                   string   `json:"history_file"`
-	ActivityTypesFile             string   `json:"activity_types_file"`
-	DefaultActivityType           string   `json:"default_activity_type"`
-	InactivityTypesFile           string   `json:"inactivity_types_file"`
-	LogFile                       string   `json:"log_file"`
-	IdleWarnAfter                 Duration `json:"idle_warn_after"`
-	StopAfterWarn                 Duration `json:"stop_after_warn"`
-	PollInterval                  Duration `json:"poll_interval"`
-	ExcludedWindowSubstrings      []string `json:"excluded_window_substrings"`
-	ExcludedWindowTitleSubstrings []string `json:"excluded_window_title_substrings"`
-	ExcludedAppSubstrings         []string `json:"excluded_app_substrings"`
-	ShowVersion                   bool     `json:"show_version"`
+	TelegramToken                 string         `json:"telegram_token"`
+	TelegramChatID                int64          `json:"telegram_chat_id"`
+	TelegramControlsOnly          bool           `json:"telegram_controls_only"`
+	HTTPPort                      int            `json:"http_port"`
+	AutoStartDay                  bool           `json:"auto_start_day"`
+	EnableDesktopNotifications    bool           `json:"enable_desktop_notifications"`
+	HistoryFile                   string         `json:"history_file"`
+	ActivityTypesFile             string         `json:"activity_types_file"`
+	DefaultActivityType           string         `json:"default_activity_type"`
+	InactivityTypesFile           string         `json:"inactivity_types_file"`
+	LogFile                       string         `json:"log_file"`
+	IdleWarnAfter                 Duration       `json:"idle_warn_after"`
+	StopAfterWarn                 Duration       `json:"stop_after_warn"`
+	PollInterval                  Duration       `json:"poll_interval"`
+	Excluded                      []ExcludedRule `json:"excluded"`
+	ExcludedWindowSubstrings      []string       `json:"excluded_window_substrings"`
+	ExcludedWindowTitleSubstrings []string       `json:"excluded_window_title_substrings"`
+	ExcludedAppSubstrings         []string       `json:"excluded_app_substrings"`
+	ShowVersion                   bool           `json:"show_version"`
 }
 
 func Default() Config {
@@ -85,9 +92,10 @@ func Default() Config {
 			"Telegram",
 			"Youtube",
 		},
-		ExcludedWindowTitleSubstrings: []string{
-			"Telegram",
-			"Youtube",
+		ExcludedWindowTitleSubstrings: []string{"Telegram", "Youtube"},
+		Excluded: []ExcludedRule{
+			{Tag: "Telegram", Type: "title"},
+			{Tag: "Youtube", Type: "title"},
 		},
 	}
 }
@@ -142,6 +150,9 @@ func Load(path string) (Config, error) {
 	}
 	if len(cfg.ExcludedWindowTitleSubstrings) == 0 && len(cfg.ExcludedWindowSubstrings) > 0 {
 		cfg.ExcludedWindowTitleSubstrings = append([]string{}, cfg.ExcludedWindowSubstrings...)
+	}
+	if len(cfg.Excluded) == 0 {
+		cfg.Excluded = legacyExcludedRules(cfg.ExcludedWindowTitleSubstrings, cfg.ExcludedAppSubstrings)
 	}
 
 	return cfg, nil
@@ -241,4 +252,23 @@ func OverrideFromFlags(cfg *Config, args []string) error {
 	}
 
 	return nil
+}
+
+func legacyExcludedRules(titleExcluded, appExcluded []string) []ExcludedRule {
+	items := make([]ExcludedRule, 0, len(titleExcluded)+len(appExcluded))
+	for _, item := range titleExcluded {
+		item = strings.TrimSpace(item)
+		if item == "" {
+			continue
+		}
+		items = append(items, ExcludedRule{Tag: item, Type: "title"})
+	}
+	for _, item := range appExcluded {
+		item = strings.TrimSpace(item)
+		if item == "" {
+			continue
+		}
+		items = append(items, ExcludedRule{Tag: item, Type: "app"})
+	}
+	return items
 }

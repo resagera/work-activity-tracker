@@ -164,9 +164,17 @@ go build -o ./bin/work-activity-tracker-tray ./cmd/tracker-tray-linux-x11
   "idle_warn_after": "2m",
   "stop_after_warn": "1m",
   "poll_interval": "5s",
-  "excluded_window_substrings": [
-    "Telegram",
-    "Youtube"
+  "excluded": [
+    {
+      "tag": "Telegram",
+      "type": "title",
+      "exclude": null
+    },
+    {
+      "tag": "Youtube",
+      "type": "title",
+      "exclude": null
+    }
   ]
 }
 ```
@@ -189,7 +197,9 @@ go build -o ./bin/work-activity-tracker-tray ./cmd/tracker-tray-linux-x11
 * `idle_warn_after` — время бездействия до предупреждения.
 * `stop_after_warn` — время после предупреждения до остановки учета.
 * `poll_interval` — интервал polling.
-* `excluded_window_substrings` — список подстрок. Если хотя бы одна найдена в одном из полей окна, активность сразу останавливается.
+* `excluded` — список правил исключения. У каждого правила есть `tag`, `type` и опциональное вложенное `exclude`.
+* `type` поддерживает как минимум `title` и `app` (`WM_CLASS`). Также поддерживаются алиасы `window_title`, `window`, `wm_class`, `application`.
+* Вложенный `exclude` работает как исключение из исключения. Если совпал корневой rule, но совпал и его `exclude`, блокировка снимается. Следующий вложенный `exclude` снова включает блокировку и так далее.
 
 Для tray-приложения используется отдельный конфиг `tray-config.json`.
 
@@ -247,7 +257,7 @@ xprop -id $(xdotool getwindowfocus)
 
 ### Исключенные окна
 
-Если активное окно совпало по одному из полей с подстрокой из `excluded_window_substrings`:
+Если активное окно совпало по одному из правил из `excluded`:
 
 * учет активности останавливается сразу;
 * идет неактивное время;

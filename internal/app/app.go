@@ -110,9 +110,10 @@ func (a *App) runHTTP(ctx context.Context) {
 	})
 
 	mux.HandleFunc("/window-triggers", func(w http.ResponseWriter, r *http.Request) {
+		titleTriggers, appTriggers := groupedExcludedTriggers(a.cfg.Excluded)
 		writeJSON(w, http.StatusOK, map[string]any{
-			"title_triggers": a.cfg.ExcludedWindowTitleSubstrings,
-			"app_triggers":   a.cfg.ExcludedAppSubstrings,
+			"title_triggers": titleTriggers,
+			"app_triggers":   appTriggers,
 		})
 	})
 
@@ -376,7 +377,7 @@ func (a *App) runActiveWindowPolling(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			info, err := a.env.ActiveWindowInfo(a.cfg.ExcludedWindowTitleSubstrings, a.cfg.ExcludedAppSubstrings)
+			info, err := a.env.ActiveWindowInfo(a.cfg.Excluded)
 			if err != nil {
 				a.tracker.Logf("active window check error: %v", err)
 				continue
@@ -725,6 +726,34 @@ func contains(items []string, target string) bool {
 		}
 	}
 	return false
+}
+
+func groupedExcludedTriggers(rules []config.ExcludedRule) ([]string, []string) {
+	var titleTriggers []string
+	var appTriggers []string
+
+	var walk func(rule *config.ExcludedRule)
+	walk = func(rule *config.ExcludedRule) {
+		if rule == nil {
+			return
+		}
+		tag := strings.TrimSpace(rule.Tag)
+		if tag != "" {
+			switch strings.ToLower(strings.TrimSpace(rule.Type)) {
+			case "title", "window", "window_title":
+				titleTriggers = append(titleTriggers, tag)
+			case "app", "wm_class", "application":
+				appTriggers = append(appTriggers, tag)
+			}
+		}
+		walk(rule.Exclude)
+	}
+
+	for i := range rules {
+		walk(&rules[i])
+	}
+
+	return titleTriggers, appTriggers
 }
 
 func (a *App) currentSessionName(s tracker.SessionSummary) string {

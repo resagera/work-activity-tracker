@@ -10,6 +10,7 @@ import (
 
 	"github.com/godbus/dbus/v5"
 
+	"work-activity-tracker/internal/config"
 	"work-activity-tracker/internal/platform"
 )
 
@@ -98,7 +99,7 @@ func (e *Environment) WatchScreenLock(ctx context.Context, onChange func(bool)) 
 	}
 }
 
-func (e *Environment) ActiveWindowInfo(titleExcluded []string, appExcluded []string) (platform.WindowInfo, error) {
+func (e *Environment) ActiveWindowInfo(excluded []config.ExcludedRule) (platform.WindowInfo, error) {
 	windowID, err := getFocusedWindowID()
 	if err != nil {
 		return platform.WindowInfo{}, err
@@ -122,7 +123,7 @@ func (e *Environment) ActiveWindowInfo(titleExcluded []string, appExcluded []str
 		WMClass:          parseWMClass(xpropOut),
 	}
 
-	blocked, field, substr := matchWindowInfo(info, titleExcluded, appExcluded)
+	blocked, field, substr := matchWindowInfo(info, excluded)
 	info.BlockedByRule = blocked
 	info.MatchedField = field
 	info.MatchedSubstring = substr
@@ -210,26 +211,63 @@ func trimQuoted(s string) string {
 	return s
 }
 
-func matchWindowInfo(info platform.WindowInfo, titleExcluded []string, appExcluded []string) (bool, string, string) {
-	for _, sub := range titleExcluded {
-		sub = strings.TrimSpace(sub)
-		if sub == "" {
+func matchWindowInfo(info platform.WindowInfo, excluded []config.ExcludedRule) (bool, string, string) {
+	for _, rule := range excluded {
+		chain := matchingRuleChain(info, &rule)
+		if len(chain) == 0 || len(chain)%2 == 0 {
 			continue
 		}
-		if strings.Contains(strings.ToLower(info.Title), strings.ToLower(sub)) {
-			return true, "title", sub
-		}
+		effective := chain[len(chain)-1]
+		return true, matchedFieldName(effective.Type), effective.Tag
 	}
-
-	for _, sub := range appExcluded {
-		sub = strings.TrimSpace(sub)
-		if sub == "" {
-			continue
-		}
-		if strings.Contains(strings.ToLower(info.WMClass), strings.ToLower(sub)) {
-			return true, "WM_CLASS", sub
-		}
-	}
-
 	return false, "", ""
+}
+
+func matchingRuleChain(info platform.WindowInfo, rule *config.ExcludedRule) []config.ExcludedRule {
+	if rule == nil || !excludedRuleMatches(info, *rule) {
+		return nil
+	}
+
+	chain := []config.ExcludedRule{*rule}
+	chain = append(chain, matchingRuleChain(info, rule.Exclude)...)
+	return chain
+}
+
+func excludedRuleMatches(info platform.WindowInfo, rule config.ExcludedRule) bool {
+	tag := strings.ToLower(strings.TrimSpace(rule.Tag))
+	if tag == "" {
+		return false
+	}
+
+	return strings.Contains(strings.ToLower(excludedFieldValue(info, rule.Type)), tag)
+}
+
+func excludedFieldValue(info platform.WindowInfo, ruleType string) string {
+	switch strings.ToLower(strings.TrimSpace(ruleType)) {
+	case "title", "window", "window_title":
+		return info.Title
+	case "app", "wm_class", "application":
+		return info.WMClass
+	case "gtk_application_id", "gtk_app_id":
+		return info.GTKApplicationID
+	case "kde_desktop_file", "kde_net_wm_desktop_file":
+		return info.KDEDesktopFile
+	default:
+		return ""
+	}
+}
+
+func matchedFieldName(ruleType string) string {
+	switch strings.ToLower(strings.TrimSpace(ruleType)) {
+	case "title", "window", "window_title":
+		return "title"
+	case "app", "wm_class", "application":
+		return "WM_CLASS"
+	case "gtk_application_id", "gtk_app_id":
+		return "GTK_APPLICATION_ID"
+	case "kde_desktop_file", "kde_net_wm_desktop_file":
+		return "KDE_NET_WM_DESKTOP_FILE"
+	default:
+		return ruleType
+	}
 }

@@ -3,6 +3,8 @@ package platform
 import (
 	"context"
 	"time"
+
+	"work-activity-tracker/internal/config"
 )
 
 type WindowInfo struct {
@@ -20,6 +22,6 @@ type Environment interface {
 	IdleDuration() (time.Duration, error)
 	IsScreenLocked() (bool, error)
 	WatchScreenLock(ctx context.Context, onChange func(bool)) error
-	ActiveWindowInfo(titleExcluded []string, appExcluded []string) (WindowInfo, error)
+	ActiveWindowInfo(excluded []config.ExcludedRule) (WindowInfo, error)
 	SendDesktopNotification(title, body string) error
 }
