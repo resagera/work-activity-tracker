@@ -440,6 +440,12 @@ const webUIHTML = `<!doctype html>
       display: grid;
       gap: 10px;
     }
+    .history-stats-panel {
+      border-top: 1px dashed var(--line);
+      padding: 14px;
+      display: grid;
+      gap: 10px;
+    }
     .is-hidden {
       display: none !important;
     }
@@ -658,11 +664,12 @@ const webUIHTML = `<!doctype html>
         return '<div class="period-strip-empty">' + escapeHtml(emptyText) + '</div>';
       }
       return items.map((item) => {
+        const percent = Number.isFinite(item.percent) && item.percent > 0 ? ' · ' + item.percent.toFixed(1) + '%' : '';
         return '' +
           '<div class="period-item">' +
             '<div class="period-head">' +
               '<strong>' + escapeHtml(item.name) + '</strong>' +
-              '<span>' + formatDurationFromNs(item.active_ns) + '</span>' +
+              '<span>' + formatDurationFromNs(item.active_ns) + percent + '</span>' +
             '</div>' +
           '</div>';
       }).join("");
@@ -945,8 +952,12 @@ const webUIHTML = `<!doctype html>
         const node = document.createElement("div");
         node.className = "history-item";
         const periods = Array.isArray(item.periods) ? item.periods : [];
+        const windows = Array.isArray(item.top_windows) ? item.top_windows : [];
+        const apps = Array.isArray(item.top_apps) ? item.top_apps : [];
         const periodsHtml = buildPeriodsList(periods, "Нет данных по периодам");
         const stripHtml = buildPeriodStrip(periods, "Нет данных по периодам");
+        const windowsHtml = buildUsageStatsList(windows, "Нет данных по окнам");
+        const appsHtml = buildUsageStatsList(apps, "Нет данных по приложениям");
         const sessionName = historySessionName(item);
 
         node.innerHTML =
@@ -968,26 +979,44 @@ const webUIHTML = `<!doctype html>
               '<strong>Активность: ' + formatDurationFromNs(item.total_active) + '</strong>' +
               '<span>Неактивность: ' + formatDurationFromNs(item.total_inactive) + '</span>' +
               '<span>Добавлено: ' + formatDurationFromNs(item.total_added) + '</span>' +
-              '<span>Периодов: ' + periods.length + (periods.length ? ' <span class="history-link">(показать)</span>' : '') + '</span>' +
-              '<span>Окон: ' + (item.window_count || 0) + '</span>' +
-              '<span>Приложений: ' + (item.app_count || 0) + '</span>' +
+              '<span>Периодов: ' + periods.length + (periods.length ? ' <span class="history-link history-periods-toggle">(показать)</span>' : '') + '</span>' +
+              '<span>Окон: ' + (item.window_count || 0) + (windows.length ? ' <span class="history-link history-windows-toggle">(показать)</span>' : '') + '</span>' +
+              '<span>Приложений: ' + (item.app_count || 0) + (apps.length ? ' <span class="history-link history-apps-toggle">(показать)</span>' : '') + '</span>' +
             '</div>' +
             '<div class="history-visual">' +
               '<div class="history-visual-label">Периоды сессии</div>' +
               stripHtml +
             '</div>' +
           '</div>' +
-          (periods.length ? '<div class="history-periods is-hidden">' + periodsHtml + '</div>' : '');
-        const toggle = node.querySelector(".history-link");
-        const body = node.querySelector(".history-periods");
+          (periods.length ? '<div class="history-periods is-hidden">' + periodsHtml + '</div>' : '') +
+          (windows.length ? '<div class="history-stats-panel history-windows is-hidden"><div class="history-visual-label">Активные окна</div>' + windowsHtml + '</div>' : '') +
+          (apps.length ? '<div class="history-stats-panel history-apps is-hidden"><div class="history-visual-label">Активные приложения</div>' + appsHtml + '</div>' : '');
+        const periodsToggle = node.querySelector(".history-periods-toggle");
+        const periodsBody = node.querySelector(".history-periods");
+        const windowsToggle = node.querySelector(".history-windows-toggle");
+        const windowsBody = node.querySelector(".history-windows");
+        const appsToggle = node.querySelector(".history-apps-toggle");
+        const appsBody = node.querySelector(".history-apps");
         const editButton = node.querySelector(".history-name-edit");
         const editRow = node.querySelector(".history-edit-row");
         const saveButton = node.querySelector(".history-name-save");
         const nameInput = node.querySelector(".history-name-input");
-        if (toggle && body) {
-          toggle.onclick = () => {
-            body.classList.toggle("is-hidden");
-            toggle.textContent = body.classList.contains("is-hidden") ? "(показать)" : "(скрыть)";
+        if (periodsToggle && periodsBody) {
+          periodsToggle.onclick = () => {
+            periodsBody.classList.toggle("is-hidden");
+            periodsToggle.textContent = periodsBody.classList.contains("is-hidden") ? "(показать)" : "(скрыть)";
+          };
+        }
+        if (windowsToggle && windowsBody) {
+          windowsToggle.onclick = () => {
+            windowsBody.classList.toggle("is-hidden");
+            windowsToggle.textContent = windowsBody.classList.contains("is-hidden") ? "(показать)" : "(скрыть)";
+          };
+        }
+        if (appsToggle && appsBody) {
+          appsToggle.onclick = () => {
+            appsBody.classList.toggle("is-hidden");
+            appsToggle.textContent = appsBody.classList.contains("is-hidden") ? "(показать)" : "(скрыть)";
           };
         }
         if (editButton && editRow && nameInput) {
