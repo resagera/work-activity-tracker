@@ -703,6 +703,14 @@ const webUIHTML = `<!doctype html>
       return parts.join(" ");
     }
 
+    function formatHoursMinutesFromNs(ns) {
+      if (!ns || ns < 0) return "0ч 0м";
+      const totalMinutes = Math.round(ns / 1e9 / 60);
+      const h = Math.floor(totalMinutes / 60);
+      const m = totalMinutes - h * 60;
+      return h + "ч " + m + "м";
+    }
+
     function escapeHtml(value) {
       return String(value ?? "")
         .replaceAll("&", "&amp;")
@@ -968,7 +976,9 @@ const webUIHTML = `<!doctype html>
                 '<button class="ghost icon-button history-name-edit" title="Изменить имя">&#9998;</button>' +
               '</div>' +
               '<div class="history-top-times">' +
-                new Date(item.session_started_at).toLocaleString() + ' - ' + new Date(item.session_ended_at).toLocaleString() +
+                'Активность: ' + formatHoursMinutesFromNs(item.total_active) +
+                ' · Неактивность: ' + formatHoursMinutesFromNs(item.total_inactive) +
+                ' · ' + new Date(item.session_started_at).toLocaleString() + ' - ' + new Date(item.session_ended_at).toLocaleString() +
               '</div>' +
             '</div>' +
             '<div class="history-edit-row is-hidden">' +
