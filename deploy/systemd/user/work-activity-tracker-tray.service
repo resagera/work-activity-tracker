@@ -1,0 +1,14 @@
+[Unit]
+Description=Work Activity Tracker Tray
+After=graphical-session.target work-activity-tracker.service
+Wants=graphical-session.target work-activity-tracker.service
+
+[Service]
+Type=simple
+WorkingDirectory={{WORKING_DIR}}
+ExecStart={{TRAY_BIN}} --config={{TRAY_CONFIG}}
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=default.target
