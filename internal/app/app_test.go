@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -94,6 +95,67 @@ func TestHTTPHandlerRootAndStatus(t *testing.T) {
 	}
 	if summary.CurrentActivityColor != "" {
 		t.Fatalf("current activity color = %q, want empty value before session start", summary.CurrentActivityColor)
+	}
+}
+
+func TestHTTPHandlerServesEmbeddedWebUIAssets(t *testing.T) {
+	a := newTestApp(t)
+	handler := a.httpHandler()
+
+	cases := []struct {
+		path        string
+		contentType string
+		contains    string
+	}{
+		{path: "/index.html", contentType: "text/html", contains: `href="/webui.css"`},
+		{path: "/webui.css", contentType: "text/css", contains: ".wrap"},
+		{path: "/webui.js", contentType: "application/javascript", contains: "function renderStatus"},
+	}
+
+	for _, tc := range cases {
+		rec := performRequest(t, handler, http.MethodGet, tc.path, nil)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("%s status = %d, want %d", tc.path, rec.Code, http.StatusOK)
+		}
+		if got := rec.Header().Get("Content-Type"); !strings.Contains(got, tc.contentType) {
+			t.Fatalf("%s content-type = %q, want %q", tc.path, got, tc.contentType)
+		}
+		if !strings.Contains(rec.Body.String(), tc.contains) {
+			t.Fatalf("%s body does not contain %q", tc.path, tc.contains)
+		}
+	}
+}
+
+func TestHTTPHandlerPrefersWorkingDirectoryWebUIFiles(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+
+	files := map[string]string{
+		"index.html": "<!doctype html><title>local override</title>",
+		"webui.css":  "body { color: red; }",
+		"webui.js":   "window.localOverride = true;",
+	}
+	for name, content := range files {
+		if err := os.WriteFile(name, []byte(content), 0o644); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+	}
+
+	a := newTestApp(t)
+	handler := a.httpHandler()
+
+	for name, content := range files {
+		path := "/" + name
+		if name == "index.html" {
+			path = "/"
+		}
+		rec := performRequest(t, handler, http.MethodGet, path, nil)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("%s status = %d, want %d", path, rec.Code, http.StatusOK)
+		}
+		if got := rec.Body.String(); got != content {
+			t.Fatalf("%s body = %q, want %q", path, got, content)
+		}
 	}
 }
 

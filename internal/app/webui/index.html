@@ -1,0 +1,153 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Work Activity Tracker</title>
+  <link rel="stylesheet" href="/webui.css">
+
+</head>
+<body>
+  <div class="wrap">
+    <section class="hero">
+      <div class="status-line">
+        <h1>Work Activity<br>Tracker</h1>
+        <button class="ghost" id="btn-theme">Тёмная тема</button>
+      </div>
+      <div class="sub">Тот же HTTP сервер обслуживает API и интерфейс управления. Статус и история обновляются прямо из текущего состояния трекера.</div>
+    </section>
+
+    <div class="grid">
+      <section class="card">
+        <div class="status-line">
+          <div class="session-name-block">
+            <div class="session-name-display">
+              <div class="session-name-title" id="session-name-title">Сессия</div>
+              <button class="ghost icon-button" id="btn-edit-session-name" title="Изменить имя">&#9998;</button>
+            </div>
+            <div class="session-name-form is-hidden" id="session-name-form">
+              <input id="session-name-input" placeholder="Имя текущей сессии">
+              <button class="ghost" id="btn-set-session-name">Сохранить имя</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="status-line">
+          <div class="pill"><span class="dot" id="state-dot"></span><span id="state-text">Загрузка...</span></div>
+          <div class="pill">Старт дня: <strong id="started-at">-</strong></div>
+        </div>
+
+        <div class="metrics">
+          <div class="metric">
+            <div class="metric-label">Активность</div>
+            <div class="metric-value" id="active-total">0s</div>
+          </div>
+          <div class="metric">
+            <div class="metric-label">Неактивность</div>
+            <div class="metric-value" id="inactive-total">0s</div>
+          </div>
+          <div class="metric">
+            <div class="metric-label">Добавлено вручную</div>
+            <div class="metric-value" id="added-total">0s</div>
+          </div>
+        </div>
+
+        <div class="session-strip-card">
+          <div class="session-strip-head">
+            <div class="metric-label" style="margin:0;">Периоды текущей сессии <span class="history-link" id="current-periods-toggle">(показать)</span></div>
+            <div class="session-strip-note" id="current-periods-note">Нет данных</div>
+          </div>
+          <div id="current-periods-strip" class="period-strip-empty">Сессия пока не начата.</div>
+          <div id="current-periods-list" class="history-periods is-hidden"></div>
+        </div>
+
+        <div class="details">
+          <div class="details-row"><div class="details-key">Тип активности</div><div id="current-activity-type">-</div></div>
+          <div class="details-row"><div class="details-key">Тип неактивности</div><div id="current-inactivity-type">-</div></div>
+          <div class="details-row"><div class="details-key">Активное окно</div><div><div id="window-title">-</div><div id="window-title-stats" class="detail-stats is-hidden"></div></div></div>
+          <div class="details-row"><div class="details-key">Триггеры окна</div><div id="window-title-triggers">-</div></div>
+          <div class="details-row"><div class="details-key">Активное приложение</div><div><div id="window-class">-</div><div id="window-class-stats" class="detail-stats is-hidden"></div></div></div>
+          <div class="details-row"><div class="details-key">Триггеры приложения</div><div id="window-app-triggers">-</div></div>
+          <div class="details-row"><div class="details-key">Последнее изменение</div><div id="last-change">-</div></div>
+        </div>
+      </section>
+
+      <section class="card">
+        <div class="actions">
+          <button class="secondary" id="btn-new-day">Начать новый день</button>
+          <button class="warn" id="btn-continue-day">Продолжить день</button>
+          <button class="secondary" id="btn-start">Старт / Возобновить</button>
+          <button class="ghost" id="btn-pause">Пауза</button>
+          <button class="danger" id="btn-end">Завершить день</button>
+          <button class="secondary" id="btn-settings">Настройки</button>
+        </div>
+        <div class="time-actions">
+          <button class="ghost" id="btn-add-10">+10м</button>
+          <button class="ghost" id="btn-add-30">+30м</button>
+          <button class="ghost" id="btn-add-60">+1ч</button>
+          <button class="ghost" id="btn-add-120">+2ч</button>
+          <button class="warn" id="btn-sub-10">-10м</button>
+          <button class="warn" id="btn-sub-20">-20м</button>
+          <button class="warn" id="btn-sub-30">-30м</button>
+          <button class="warn" id="btn-sub-60">-1ч</button>
+        </div>
+        <div class="type-group">
+          <div class="type-group-title">Активность</div>
+          <div class="type-buttons" id="activity-type-buttons"></div>
+        </div>
+        <div class="type-group">
+          <div class="type-group-title">Неактивность</div>
+          <div class="type-buttons" id="inactivity-type-buttons"></div>
+        </div>
+        <div id="settings-panel" class="settings-panel is-hidden">
+          <div class="row">
+            <button class="secondary" id="btn-refresh">Обновить</button>
+          </div>
+          <div class="row">
+            <div class="color-field">
+              <input id="activity-type-color" placeholder="#20256a">
+              <input id="activity-type-color-picker" class="color-picker" type="color" value="#20256a">
+            </div>
+            <button class="ghost" id="btn-set-activity-color">Установить цвет активности</button>
+          </div>
+          <div class="row">
+            <input id="new-activity-type" placeholder="Новый тип активности, например: проектирование">
+            <div class="color-field">
+              <input id="new-activity-color" placeholder="#4f46e5">
+              <input id="new-activity-color-picker" class="color-picker" type="color" value="#4f46e5">
+            </div>
+            <button class="ghost" id="btn-add-activity-type">Добавить тип активности</button>
+          </div>
+          <div class="row">
+            <div class="color-field">
+              <input id="inactivity-type-color" placeholder="#c96c2b">
+              <input id="inactivity-type-color-picker" class="color-picker" type="color" value="#c96c2b">
+            </div>
+            <button class="ghost" id="btn-set-inactivity-color">Установить цвет неактивности</button>
+          </div>
+          <div class="row">
+            <input id="new-inactivity-type" placeholder="Новый тип неактивности, например: перекус">
+            <div class="color-field">
+              <input id="new-inactivity-color" placeholder="#ef4444">
+              <input id="new-inactivity-color-picker" class="color-picker" type="color" value="#ef4444">
+            </div>
+            <button class="ghost" id="btn-add-inactivity-type">Добавить тип</button>
+          </div>
+        </div>
+        <div class="message" id="message"></div>
+      </section>
+    </div>
+
+    <section class="card" style="margin-top:18px;">
+      <div class="status-line">
+        <h2 style="margin:0;font-size:22px;">История</h2>
+        <div class="pill">Источник: <strong>/history</strong></div>
+      </div>
+      <div class="history" id="history"></div>
+    </section>
+  </div>
+
+  <script src="/webui.js" defer></script>
+
+</body>
+</html>
