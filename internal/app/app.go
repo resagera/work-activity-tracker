@@ -94,6 +94,27 @@ func (a *App) Run(ctx context.Context) error {
 }
 
 func (a *App) runHTTP(ctx context.Context) {
+	srv := &http.Server{
+		Addr:    fmt.Sprintf(":%d", a.cfg.HTTPPort),
+		Handler: a.httpHandler(),
+	}
+
+	go func() {
+		<-ctx.Done()
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = srv.Shutdown(shutdownCtx)
+	}()
+
+	a.tracker.Logf("🌐 HTTP API запущен на :%d", a.cfg.HTTPPort)
+	a.tracker.Logf("🖥 Web UI: http://127.0.0.1:%d/", a.cfg.HTTPPort)
+
+	if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		a.tracker.Logf("HTTP API ошибка: %v", err)
+	}
+}
+
+func (a *App) httpHandler() http.Handler {
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
@@ -302,24 +323,7 @@ func (a *App) runHTTP(ctx context.Context) {
 		writeJSON(w, http.StatusOK, a.EndSession("http api"))
 	})
 
-	srv := &http.Server{
-		Addr:    fmt.Sprintf(":%d", a.cfg.HTTPPort),
-		Handler: mux,
-	}
-
-	go func() {
-		<-ctx.Done()
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		_ = srv.Shutdown(shutdownCtx)
-	}()
-
-	a.tracker.Logf("🌐 HTTP API запущен на :%d", a.cfg.HTTPPort)
-	a.tracker.Logf("🖥 Web UI: http://127.0.0.1:%d/", a.cfg.HTTPPort)
-
-	if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-		a.tracker.Logf("HTTP API ошибка: %v", err)
-	}
+	return mux
 }
 
 func (a *App) runIdlePolling(ctx context.Context) {
