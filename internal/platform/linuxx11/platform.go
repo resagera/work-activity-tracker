@@ -198,9 +198,20 @@ func parseWMClass(xpropOutput string) string {
 		if strings.HasPrefix(line, "WM_CLASS") {
 			if idx := strings.Index(line, "="); idx >= 0 {
 				v := strings.TrimSpace(line[idx+1:])
-				return trimQuoted(v)
+				return parseWMClassValue(v)
 			}
 		}
+	}
+	return ""
+}
+
+func parseWMClassValue(value string) string {
+	parts := strings.Split(value, ",")
+	if len(parts) >= 2 {
+		return trimQuoted(parts[1])
+	}
+	if len(parts) == 1 {
+		return trimQuoted(parts[0])
 	}
 	return ""
 }
